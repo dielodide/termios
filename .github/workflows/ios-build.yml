@@ -35,19 +35,25 @@ jobs:
       - name: Expo prebuild iOS
         run: cd kaliOS && npx expo prebuild --platform ios --clean --no-install
 
-      - name: Patch Podfile - force Swift 5 on all pods
+      - name: Patch Podfile - inject Swift 5 inside existing post_install
         run: |
           PODFILE="$GITHUB_WORKSPACE/kaliOS/ios/Podfile"
-          printf '\n# CI patch - force Swift 5 to suppress Swift 6 strict-concurrency errors\n' >> "$PODFILE"
-          printf 'post_install do |installer|\n' >> "$PODFILE"
-          printf '  installer.pods_project.targets.each do |target|\n' >> "$PODFILE"
-          printf '    target.build_configurations.each do |config|\n' >> "$PODFILE"
-          printf "      config.build_settings['SWIFT_VERSION'] = '5'\n" >> "$PODFILE"
-          printf '    end\n' >> "$PODFILE"
-          printf '  end\n' >> "$PODFILE"
-          printf 'end\n' >> "$PODFILE"
-          echo "=== Podfile tail ==="
-          tail -12 "$PODFILE"
+          PY="$RUNNER_TEMP/patch_podfile.py"
+          # Build the Python script line by line (no heredoc / no << in YAML)
+          printf 'import sys\n'                                                                         >  "$PY"
+          printf 'path = sys.argv[1]\n'                                                                >> "$PY"
+          printf 'txt  = open(path).read()\n'                                                          >> "$PY"
+          printf 'ins  = "\\n  # CI: force Swift 5 (suppress Swift 6 concurrency errors)\\n"\n'       >> "$PY"
+          printf 'ins += "  installer.pods_project.targets.each do |target|\\n"\n'                    >> "$PY"
+          printf 'ins += "    target.build_configurations.each do |config|\\n"\n'                     >> "$PY"
+          printf "ins += \"      config.build_settings['SWIFT_VERSION'] = '5'\\n\"\n"               >> "$PY"
+          printf 'ins += "    end\\n  end\\n"\n'                                                        >> "$PY"
+          printf 'needle = "post_install do |installer|"\n'                                           >> "$PY"
+          printf 'txt = txt.replace(needle, needle + ins, 1)\n'                                        >> "$PY"
+          printf 'open(path, "w").write(txt)\n'                                                        >> "$PY"
+          python3 "$PY" "$PODFILE"
+          echo "=== Podfile patch applied ==="
+          tail -20 "$PODFILE"
 
       - name: Pod install
         run: |
