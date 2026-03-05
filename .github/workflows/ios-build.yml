@@ -36,26 +36,41 @@ jobs:
           npx expo prebuild --platform ios --clean --no-install
           cd ios && pod install --repo-update
 
-      - name: Get scheme name
-        id: scheme
+      - name: Inspect ios/ directory
         run: |
-          SCHEME=$(cd kaliOS/ios && ls *.xcworkspace | sed 's/.xcworkspace//')
-          echo "name=$SCHEME" >> $GITHUB_OUTPUT
-          echo "Scheme: $SCHEME"
-          echo "=== Schemes disponibles ==="
-          cd kaliOS/ios && xcodebuild -list 2>&1 || true
+          echo "=== Contenu de kaliOS/ios/ ==="
+          ls -la $GITHUB_WORKSPACE/kaliOS/ios/
+          echo "=== Workspaces ==="
+          find $GITHUB_WORKSPACE/kaliOS/ios -name "*.xcworkspace" -maxdepth 2
+          echo "=== Schemes ==="
+          find $GITHUB_WORKSPACE/kaliOS/ios -name "*.xcworkspace" -maxdepth 2 | head -1 | xargs -I{} xcodebuild -list -workspace {} 2>&1 || true
 
       - name: Build .app (unsigned)
         run: |
           set -o pipefail
           BUILD_DIR=$RUNNER_TEMP/build
-          mkdir -p $BUILD_DIR
           LOG_FILE=$RUNNER_TEMP/xcodebuild.log
-          cd kaliOS/ios
+          mkdir -p $BUILD_DIR
+
+          IOS_DIR=$GITHUB_WORKSPACE/kaliOS/ios
+
+          # Détecte le workspace avec path absolu
+          WORKSPACE=$(find $IOS_DIR -name "*.xcworkspace" -maxdepth 2 -not -path "*/xcuserdata/*" | head -1)
+          echo "Workspace trouvé: $WORKSPACE"
+
+          if [ -z "$WORKSPACE" ]; then
+            echo "ERREUR: Aucun .xcworkspace trouvé dans $IOS_DIR"
+            ls -la $IOS_DIR
+            exit 1
+          fi
+
+          # Déduit le scheme du nom du workspace
+          SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "Scheme: $SCHEME"
 
           xcodebuild build \
-            -workspace "${{ steps.scheme.outputs.name }}.xcworkspace" \
-            -scheme "${{ steps.scheme.outputs.name }}" \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath $BUILD_DIR \
@@ -69,31 +84,29 @@ jobs:
           BUILD_EXIT=${PIPESTATUS[0]}
 
           if [ $BUILD_EXIT -ne 0 ]; then
-            echo "=== BUILD FAILED — Dernières erreurs ==="
-            grep -E "error:|warning:|note:" $LOG_FILE | tail -30
+            echo "=== BUILD FAILED — Erreurs ==="
+            grep "error:" $LOG_FILE | grep -v "^note" | tail -20
             exit 1
           fi
 
-          echo "=== Contenu DerivedData ==="
-          find $BUILD_DIR/Build/Products -maxdepth 3 2>/dev/null || echo "Vide"
+          echo "=== .app générés ==="
+          find $BUILD_DIR -name "*.app" 2>/dev/null
 
-      - name: Find and package .ipa
+      - name: Package .ipa
         run: |
           BUILD_DIR=$RUNNER_TEMP/build
 
-          echo "=== Tous les .app trouvés ==="
-          find $BUILD_DIR -name "*.app" 2>/dev/null
-
-          APP_PATH=$(find $BUILD_DIR/Build/Products -name "*.app" \
+          APP_PATH=$(find $BUILD_DIR -name "*.app" \
             -not -path "*simulator*" \
             -not -path "*SimulatorSDK*" \
             -not -name "*.appex" \
             2>/dev/null | head -1)
 
-          echo "APP_PATH retenu: $APP_PATH"
+          echo "APP_PATH: $APP_PATH"
 
           if [ -z "$APP_PATH" ]; then
-            echo "ERREUR: Aucun .app device trouvé"
+            echo "Tous les fichiers dans build:"
+            find $BUILD_DIR -maxdepth 5 2>/dev/null
             exit 1
           fi
 
@@ -102,7 +115,7 @@ jobs:
           cd $RUNNER_TEMP
           zip -r AgonPreview-unsigned.ipa Payload
           ls -lh AgonPreview-unsigned.ipa
-          echo "✅ IPA créé avec succès"
+          echo "✅ IPA créé!"
 
       - name: Upload build log (on failure)
         if: failure()
@@ -112,7 +125,7 @@ jobs:
           path: ${{ runner.temp }}/xcodebuild.log
           retention-days: 7
 
-      - name: Upload IPA artifact
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: AgonPreview-unsigned-ipa
