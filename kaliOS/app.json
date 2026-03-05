@@ -11,8 +11,11 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "ios": {
-      "supportsTablet": true
+"ios": {
+  "supportsTablet": true,
+  "bundleIdentifier": "com.dielodide.agonpreview",
+  "buildNumber": "1"
+    }
     },
     "android": {
       "adaptiveIcon": {
@@ -26,22 +29,16 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "extra": {
-      "eas": {
-        "projectId": "552f0665-e30d-4f11-9ea9-97bc22a22809"
-      }
-    },
-    "updates": {
-      "url": "https://u.expo.dev/552f0665-e30d-4f11-9ea9-97bc22a22809"
-    },
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
-    "owner": "arcadalabs",
     "platforms": [
       "ios",
       "android",
       "web"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "56b41071-38e5-4c81-abab-ea9595135464"
+      }
+    },
+    "owner": "dielodide"
   }
 }
