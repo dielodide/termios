@@ -35,26 +35,27 @@ jobs:
           cd kaliOS
           npx expo prebuild --platform ios --clean --no-install
 
-      - name: Patch Podfile — disable code signing on all pods
+      - name: Patch Podfile - disable code signing on all pods
         run: |
-          PODFILE=$GITHUB_WORKSPACE/kaliOS/ios/Podfile
-          echo "" >> $PODFILE
-          cat >> $PODFILE << 'EOF'
-
-post_install do |installer|
-  installer.pods_project.targets.each do |target|
-    target.build_configurations.each do |config|
-      config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-      config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
-      config.build_settings['CODE_SIGN_IDENTITY'] = ''
-      config.build_settings['PROVISIONING_PROFILE'] = ''
-      config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
-    end
-  end
-end
-EOF
-          echo "=== Podfile patché ==="
-          tail -20 $PODFILE
+          python3 - <<'PYEOF'
+          import os
+          podfile_path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'kaliOS', 'ios', 'Podfile')
+          patch = """
+          \npost_install do |installer|
+            installer.pods_project.targets.each do |target|
+              target.build_configurations.each do |config|
+                config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+                config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+                config.build_settings['CODE_SIGN_IDENTITY'] = ''
+                config.build_settings['PROVISIONING_PROFILE'] = ''
+              end
+            end
+          end
+          """
+          with open(podfile_path, 'a') as f:
+              f.write(patch)
+          print("Podfile patched OK")
+          PYEOF
 
       - name: Pod install
         run: |
@@ -92,19 +93,17 @@ EOF
           BUILD_EXIT=${PIPESTATUS[0]}
 
           if [ $BUILD_EXIT -ne 0 ]; then
-            echo ""
-            echo "=== ERREURS DE BUILD ==="
+            echo "=== ERREURS ==="
             grep -E "^.+error:.+" $LOG_FILE | grep -v "responseFileError" | tail -30
             exit 1
           fi
 
-          echo "=== .app générés ==="
+          echo "=== .app trouves ==="
           find $BUILD_DIR -name "*.app" -not -name "*.appex" 2>/dev/null
 
       - name: Package .ipa
         run: |
           BUILD_DIR=$RUNNER_TEMP/build
-
           APP_PATH=$(find $BUILD_DIR -name "*.app" \
             -not -path "*simulator*" \
             -not -path "*SimulatorSDK*" \
@@ -123,7 +122,7 @@ EOF
           cd $RUNNER_TEMP
           zip -r AgonPreview-unsigned.ipa Payload
           ls -lh AgonPreview-unsigned.ipa
-          echo "✅ IPA créé!"
+          echo "IPA cree!"
 
       - name: Upload build log (on failure)
         if: failure()
