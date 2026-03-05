@@ -1,0 +1,90 @@
+name: iOS IPA Build
+
+on:
+  push:
+    branches:
+      - Aok
+  workflow_dispatch:  # permet de lancer manuellement
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      # 1. Checkout du repo
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # 2. Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: kaliOS/package-lock.json
+
+      # 3. Install dépendances
+      - name: Install dependencies
+        run: |
+          cd kaliOS
+          npm ci
+
+      # 4. Install Expo CLI
+      - name: Install Expo CLI
+        run: npm install -g expo-cli @expo/cli
+
+      # 5. Expo Prebuild — génère le dossier ios/ natif
+      - name: Expo Prebuild iOS
+        run: |
+          cd kaliOS
+          npx expo prebuild --platform ios --clean --no-install
+          cd ios && pod install --repo-update
+
+      # 6. Trouver le nom du scheme automatiquement
+      - name: Get scheme name
+        id: scheme
+        run: |
+          SCHEME=$(cd kaliOS/ios && ls *.xcworkspace | sed 's/.xcworkspace//')
+          echo "name=$SCHEME" >> $GITHUB_OUTPUT
+          echo "Scheme détecté: $SCHEME"
+
+      # 7. Build xcodebuild — UNSIGNED
+      - name: Build Archive (unsigned)
+        run: |
+          cd kaliOS/ios
+          xcodebuild \
+            -workspace "${{ steps.scheme.outputs.name }}.xcworkspace" \
+            -scheme "${{ steps.scheme.outputs.name }}" \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath $RUNNER_TEMP/app.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            PROVISIONING_PROFILE="" \
+            clean archive | xcpretty
+
+      # 8. Package en .ipa
+      - name: Package .ipa
+        run: |
+          mkdir -p $RUNNER_TEMP/Payload
+          cp -r $RUNNER_TEMP/app.xcarchive/Products/Applications/*.app \
+            $RUNNER_TEMP/Payload/
+          cd $RUNNER_TEMP
+          zip -r AgonPreview-unsigned.ipa Payload
+          echo "IPA créé: $RUNNER_TEMP/AgonPreview-unsigned.ipa"
+
+      # 9. Upload l'artifact (téléchargeable depuis GitHub)
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AgonPreview-unsigned-ipa
+          path: ${{ runner.temp }}/AgonPreview-unsigned.ipa
+          retention-days: 30
+
+      # 10. Affiche la taille du fichier
+      - name: Build info
+        run: |
+          ls -lh $RUNNER_TEMP/AgonPreview-unsigned.ipa
+          echo "✅ Build terminé avec succès!"
