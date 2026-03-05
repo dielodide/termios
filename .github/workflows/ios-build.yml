@@ -30,39 +30,11 @@ jobs:
       - name: Expo prebuild iOS
         run: cd kaliOS && npx expo prebuild --platform ios --clean --no-install
 
-      - name: Inject codesign xcconfig (overrides all targets)
-        run: |
-          cat > /tmp/no-codesign.xcconfig << 'EOF'
-          CODE_SIGNING_ALLOWED = NO
-          CODE_SIGNING_REQUIRED = NO
-          CODE_SIGN_IDENTITY =
-          PROVISIONING_PROFILE =
-          EXPANDED_CODE_SIGN_IDENTITY =
-          EOF
-
-          PODFILE="$GITHUB_WORKSPACE/kaliOS/ios/Podfile"
-          if ! grep -q 'no-codesign.xcconfig' "$PODFILE"; then
-            # Append xcconfig include at the very top of Podfile
-            echo "xcodeproj_config = '/tmp/no-codesign.xcconfig'" | cat - "$PODFILE" > /tmp/pf_tmp && mv /tmp/pf_tmp "$PODFILE"
-            echo "xcconfig override injected in Podfile"
-          fi
-
       - name: Pod install
         run: |
           set -o pipefail
           cd "$GITHUB_WORKSPACE/kaliOS/ios"
           pod install --repo-update 2>&1 | tee "$RUNNER_TEMP/pod-install.log"
-
-      - name: Create codesign override xcconfig
-        run: |
-          cat > /tmp/no-codesign.xcconfig << 'EOF'
-          CODE_SIGNING_ALLOWED = NO
-          CODE_SIGNING_REQUIRED = NO
-          CODE_SIGN_IDENTITY =
-          PROVISIONING_PROFILE =
-          EXPANDED_CODE_SIGN_IDENTITY =
-          EOF
-          echo "xcconfig created"
 
       - name: Build .app unsigned
         run: |
@@ -88,6 +60,7 @@ jobs:
 
           echo "Workspace : $WORKSPACE"
           echo "Scheme    : $SCHEME"
+          echo "Xcode     : $(xcodebuild -version | head -1)"
 
           xcodebuild build \
             -workspace "$WORKSPACE" \
@@ -96,19 +69,19 @@ jobs:
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
             -derivedDataPath "$BUILD_DIR" \
-            -xcconfig /tmp/no-codesign.xcconfig \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             PROVISIONING_PROFILE="" \
             EXPANDED_CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            SWIFT_SERIALIZE_DEBUGGING_OPTIONS=NO \
             2>&1 | tee "$LOG_FILE"
 
           BUILD_EXIT=${PIPESTATUS[0]}
           if [ $BUILD_EXIT -ne 0 ]; then
-            echo "===== BUILD ERRORS ====="
-            grep "error:" "$LOG_FILE" | grep -v "^note" | tail -80
+            echo "===== ERRORS (last 100 lines) ====="
+            tail -100 "$LOG_FILE"
             exit 1
           fi
 
