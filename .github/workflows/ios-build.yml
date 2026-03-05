@@ -35,24 +35,28 @@ jobs:
       - name: Expo prebuild iOS
         run: cd kaliOS && npx expo prebuild --platform ios --clean --no-install
 
+      # Inject SWIFT_VERSION=5 inside the single existing post_install block.
+      # printf '%s\n' prints the argument as-is (no \n -> newline conversion in %s args).
       - name: Patch Podfile - inject Swift 5 inside existing post_install
         run: |
           PODFILE="$GITHUB_WORKSPACE/kaliOS/ios/Podfile"
           PY="$RUNNER_TEMP/patch_podfile.py"
-          # Build the Python script line by line (no heredoc / no << in YAML)
-          printf 'import sys\n'                                                                         >  "$PY"
-          printf 'path = sys.argv[1]\n'                                                                >> "$PY"
-          printf 'txt  = open(path).read()\n'                                                          >> "$PY"
-          printf 'ins  = "\\n  # CI: force Swift 5 (suppress Swift 6 concurrency errors)\\n"\n'       >> "$PY"
-          printf 'ins += "  installer.pods_project.targets.each do |target|\\n"\n'                    >> "$PY"
-          printf 'ins += "    target.build_configurations.each do |config|\\n"\n'                     >> "$PY"
-          printf "ins += \"      config.build_settings['SWIFT_VERSION'] = '5'\\n\"\n"               >> "$PY"
-          printf 'ins += "    end\\n  end\\n"\n'                                                        >> "$PY"
-          printf 'needle = "post_install do |installer|"\n'                                           >> "$PY"
-          printf 'txt = txt.replace(needle, needle + ins, 1)\n'                                        >> "$PY"
-          printf 'open(path, "w").write(txt)\n'                                                        >> "$PY"
+          printf '%s\n' 'import sys'                                                         >  "$PY"
+          printf '%s\n' 'path = sys.argv[1]'                                                >> "$PY"
+          printf '%s\n' 'txt = open(path).read()'                                           >> "$PY"
+          printf '%s\n' 'ins  = "\n  # CI: force Swift 5 (suppress Swift 6 errors)\n"'    >> "$PY"
+          printf '%s\n' 'ins += "  installer.pods_project.targets.each do |target|\n"'     >> "$PY"
+          printf '%s\n' 'ins += "    target.build_configurations.each do |config|\n"'      >> "$PY"
+          printf '%s\n' "ins += \"      config.build_settings['SWIFT_VERSION'] = '5'\\n\"" >> "$PY"
+          printf '%s\n' 'ins += "    end\n  end\n"'                                          >> "$PY"
+          printf '%s\n' 'needle = "post_install do |installer|"'                            >> "$PY"
+          printf '%s\n' 'txt = txt.replace(needle, needle + ins, 1)'                        >> "$PY"
+          printf '%s\n' 'open(path, "w").write(txt)'                                        >> "$PY"
+          echo '--- Python script ---'
+          cat "$PY"
+          echo '--- Running patch ---'
           python3 "$PY" "$PODFILE"
-          echo "=== Podfile patch applied ==="
+          echo '--- Podfile tail ---'
           tail -20 "$PODFILE"
 
       - name: Pod install
