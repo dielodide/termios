@@ -35,26 +35,19 @@ jobs:
       - name: Expo prebuild iOS
         run: cd kaliOS && npx expo prebuild --platform ios --clean --no-install
 
-      # Patch the generated Podfile BEFORE pod install:
-      # Append a second post_install block that forces Swift 5 on every pod target.
-      # This suppresses all Swift 6 strict-concurrency errors (MainActor, Sendable, etc.)
-      # in third-party pods (expo-modules-core, reanimated, …) without touching node_modules.
-      - name: Patch Podfile — force Swift 5 on all pods
+      - name: Patch Podfile - force Swift 5 on all pods
         run: |
           PODFILE="$GITHUB_WORKSPACE/kaliOS/ios/Podfile"
-          cat >> "$PODFILE" << 'RUBY'
-
-# CI patch – force Swift 5 to suppress Swift 6 strict-concurrency errors
-post_install do |installer|
-  installer.pods_project.targets.each do |target|
-    target.build_configurations.each do |config|
-      config.build_settings['SWIFT_VERSION'] = '5'
-    end
-  end
-end
-RUBY
-          echo "=== Podfile tail (last 15 lines) ==="
-          tail -15 "$PODFILE"
+          printf '\n# CI patch - force Swift 5 to suppress Swift 6 strict-concurrency errors\n' >> "$PODFILE"
+          printf 'post_install do |installer|\n' >> "$PODFILE"
+          printf '  installer.pods_project.targets.each do |target|\n' >> "$PODFILE"
+          printf '    target.build_configurations.each do |config|\n' >> "$PODFILE"
+          printf "      config.build_settings['SWIFT_VERSION'] = '5'\n" >> "$PODFILE"
+          printf '    end\n' >> "$PODFILE"
+          printf '  end\n' >> "$PODFILE"
+          printf 'end\n' >> "$PODFILE"
+          echo "=== Podfile tail ==="
+          tail -12 "$PODFILE"
 
       - name: Pod install
         run: |
