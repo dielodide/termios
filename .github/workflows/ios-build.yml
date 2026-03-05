@@ -30,45 +30,36 @@ jobs:
       - name: Expo prebuild iOS
         run: cd kaliOS && npx expo prebuild --platform ios --clean --no-install
 
-      - name: Upload Podfile (debug)
+      - name: Upload Podfile raw (debug)
         uses: actions/upload-artifact@v4
         with:
           name: podfile-raw
           path: ${{ github.workspace }}/kaliOS/ios/Podfile
           retention-days: 7
 
-      - name: Patch Podfile - inject codesign disable into existing post_install
+      - name: Patch Podfile - inject codesign disable
         run: |
-          python3 << 'PYEOF'
-          import os, re
-          path = os.path.join(os.environ["GITHUB_WORKSPACE"], "kaliOS", "ios", "Podfile")
-          s = open(path).read()
-          marker = "SUKIT_DISABLE_PODS_CODESIGN"
-          if marker in s:
-              print("already patched")
-              raise SystemExit(0)
-          inject = """
-            # SUKIT_DISABLE_PODS_CODESIGN
-            installer.pods_project.targets.each do |target|
-              target.build_configurations.each do |config|
-                config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-                config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
-                config.build_settings['CODE_SIGN_IDENTITY'] = ''
-                config.build_settings['PROVISIONING_PROFILE'] = ''
-                config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
-              end
-            end
-          """
-          m = re.search(r"^post_install do \|installer\|\s*\n", s, flags=re.M)
-          if m:
-              s = s[:m.end()] + inject + s[m.end():]
-              print("Injected into existing post_install")
-          else:
-              s += "\npost_install do |installer|\n" + inject + "\nend\n"
-              print("Created new post_install")
-          open(path, "w").write(s)
-          print("Done")
-          PYEOF
+          python3 -c "
+import os, re
+path = os.path.join(os.environ['GITHUB_WORKSPACE'], 'kaliOS', 'ios', 'Podfile')
+s = open(path).read()
+marker = 'SUKIT_DISABLE_PODS_CODESIGN'
+if marker in s:
+    print('already patched')
+    raise SystemExit(0)
+m = re.search(r'^(\\s*)post_install do \\|installer\\|', s, flags=re.M)
+if m:
+    indent = m.group(1) + '  '
+    nl = s.index('\\n', m.start()) + 1
+    inject = indent + '# ' + marker + '\\n' + indent + 'installer.pods_project.targets.each do |target|\\n' + indent + '  target.build_configurations.each do |config|\\n' + indent + \"    config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'\\n\" + indent + \"    config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'\\n\" + indent + \"    config.build_settings['CODE_SIGN_IDENTITY'] = ''\\n\" + indent + \"    config.build_settings['PROVISIONING_PROFILE'] = ''\\n\" + indent + \"    config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''\\n\" + indent + '  end\\n' + indent + 'end\\n'
+    s = s[:nl] + inject + s[nl:]
+    print('Injected into existing post_install at indent: [' + m.group(1) + ']')
+else:
+    s += '\\npost_install do |installer|\\n  # ' + marker + '\\n  installer.pods_project.targets.each do |target|\\n    target.build_configurations.each do |config|\\n      config.build_settings[\\'CODE_SIGNING_ALLOWED\\'] = \\'NO\\'\\n      config.build_settings[\\'CODE_SIGNING_REQUIRED\\'] = \\'NO\\'\\n      config.build_settings[\\'CODE_SIGN_IDENTITY\\'] = \\'\\'\\n    end\\n  end\\nend\\n'
+    print('Created new post_install')
+open(path, 'w').write(s)
+print('Podfile patched OK')
+"
 
       - name: Pod install
         run: |
@@ -117,7 +108,7 @@ jobs:
 
           BUILD_EXIT=${PIPESTATUS[0]}
           if [ $BUILD_EXIT -ne 0 ]; then
-            echo "===== ERRORS ====="
+            echo "===== BUILD ERRORS ====="
             grep "error:" "$LOG_FILE" | grep -v "^note" | tail -50
             exit 1
           fi
