@@ -11,11 +11,10 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-"ios": {
-  "supportsTablet": true,
-  "bundleIdentifier": "com.dielodide.agonpreview",
-  "buildNumber": "1"
-    }
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.dielodide.agonpreview",
+      "buildNumber": "1"
     },
     "android": {
       "adaptiveIcon": {
