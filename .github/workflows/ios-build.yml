@@ -80,12 +80,15 @@ jobs:
             EXPANDED_CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             SWIFT_SERIALIZE_DEBUGGING_OPTIONS=NO \
+            SWIFT_OPTIMIZATION_LEVEL=-Onone \
             2>&1 | tee "$LOG_FILE"
 
           BUILD_EXIT=${PIPESTATUS[0]}
           if [ $BUILD_EXIT -ne 0 ]; then
-            echo "===== ERRORS (last 100 lines) ====="
-            tail -100 "$LOG_FILE"
+            echo "===== ERRORS (last 150 lines) ====="
+            grep -E '(error:|BUILD FAILED|CompileSwift|SwiftCompile)' "$LOG_FILE" | tail -50
+            echo "===== RAW TAIL ====="
+            tail -80 "$LOG_FILE"
             exit 1
           fi
 
