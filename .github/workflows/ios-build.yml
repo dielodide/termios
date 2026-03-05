@@ -7,13 +7,17 @@ on:
 
 jobs:
   build-ios:
-    runs-on: macos-15
+    # macos-14 ships Xcode 15.4 by default.
+    # ExpoModulesCore 55.x declares swift_version=6 but has genuine Swift 6
+    # strict-concurrency violations -- it was designed for Xcode 15 / Swift 5.
+    # Xcode 16.2 enforces Swift 6 and cannot be suppressed for Swift-6-mode pods.
+    runs-on: macos-14
     timeout-minutes: 90
 
     steps:
-      - name: Select Xcode 16.2
+      - name: Select Xcode 15.4
         run: |
-          sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
           xcodebuild -version
 
       - name: Checkout repo
@@ -34,35 +38,6 @@ jobs:
 
       - name: Expo prebuild iOS
         run: cd kaliOS && npx expo prebuild --platform ios --clean --no-install
-
-      # Python script injected via printf '%s\n' (no heredoc / no << in YAML).
-      # Patches the single existing post_install block to:
-      #   1. SWIFT_STRICT_CONCURRENCY = minimal  (Xcode build setting)
-      #   2. SWIFT_TREAT_WARNINGS_AS_ERRORS = NO  (safety)
-      #   3. IPHONEOS_DEPLOYMENT_TARGET = 13.4    (silence SDWebImage 9.0 warning)
-      - name: Patch Podfile - suppress Swift 6 concurrency errors
-        run: |
-          PODFILE="$GITHUB_WORKSPACE/kaliOS/ios/Podfile"
-          PY="$RUNNER_TEMP/patch_podfile.py"
-          printf '%s\n' 'import sys'                                                                          >  "$PY"
-          printf '%s\n' 'path = sys.argv[1]'                                                                 >> "$PY"
-          printf '%s\n' 'txt = open(path).read()'                                                            >> "$PY"
-          printf '%s\n' 'ins  = "\n  # CI patch: suppress Swift 6 strict concurrency\n"'                    >> "$PY"
-          printf '%s\n' 'ins += "  installer.pods_project.targets.each do |target|\n"'                      >> "$PY"
-          printf '%s\n' 'ins += "    target.build_configurations.each do |config|\n"'                       >> "$PY"
-          printf '%s\n' "ins += \"      config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'\\n\"" >> "$PY"
-          printf '%s\n' "ins += \"      config.build_settings['SWIFT_TREAT_WARNINGS_AS_ERRORS'] = 'NO'\\n\"" >> "$PY"
-          printf '%s\n' "ins += \"      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.4'\\n\"" >> "$PY"
-          printf '%s\n' 'ins += "    end\n  end\n"'                                                           >> "$PY"
-          printf '%s\n' 'needle = "post_install do |installer|"'                                             >> "$PY"
-          printf '%s\n' 'txt = txt.replace(needle, needle + ins, 1)'                                         >> "$PY"
-          printf '%s\n' 'open(path, "w").write(txt)'                                                         >> "$PY"
-          echo '--- Python script ---'
-          cat "$PY"
-          echo '--- Running patch ---'
-          python3 "$PY" "$PODFILE"
-          echo '--- Podfile post_install tail ---'
-          tail -30 "$PODFILE"
 
       - name: Pod install
         run: |
@@ -109,13 +84,11 @@ jobs:
             EXPANDED_CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             SWIFT_SERIALIZE_DEBUGGING_OPTIONS=NO \
-            SWIFT_STRICT_CONCURRENCY=minimal \
-            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
             2>&1 | tee "$LOG_FILE"
 
           BUILD_EXIT=${PIPESTATUS[0]}
           if [ $BUILD_EXIT -ne 0 ]; then
-            echo "===== ERREURS SWIFT ====="
+            echo "===== ERREURS ====="
             grep -E '^.+error: ' "$LOG_FILE" | head -80
             echo "===== RAW TAIL ====="
             tail -80 "$LOG_FILE"
@@ -148,9 +121,9 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-            name: AgonPreview-unsigned-ipa
-            path: ${{ runner.temp }}/AgonPreview-unsigned.ipa
-            retention-days: 30
+          name: AgonPreview-unsigned-ipa
+          path: ${{ runner.temp }}/AgonPreview-unsigned.ipa
+          retention-days: 30
 
       - name: Upload logs on failure
         if: failure()
