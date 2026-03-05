@@ -30,7 +30,7 @@ jobs:
       - name: Expo prebuild iOS
         run: cd kaliOS && npx expo prebuild --platform ios --clean --no-install
 
-      - name: Patch Podfile
+      - name: Patch Podfile - move post_install to top-level
         run: |
           cat > /tmp/patch_podfile.py << 'PYEOF'
           import os, re
@@ -40,32 +40,29 @@ jobs:
 
           marker = "SUKIT_DISABLE_PODS_CODESIGN"
           if marker in s:
-              print("Already patched")
+              print("Already patched, skipping")
               exit(0)
 
-          m = re.search(r"^(\s*)post_install do \|installer\|", s, flags=re.M)
+          # Find the post_install block inside target (indented)
+          # Pattern: indented post_install...end block
+          m = re.search(
+              r'^([ \t]+)(post_install do \|installer\|.*?^\1end)$',
+              s,
+              flags=re.M | re.S
+          )
 
           if m:
-              base = m.group(1)
-              i = base + "  "
-              insert_at = s.index("\n", m.start()) + 1
-              inject = (
-                  i + "# " + marker + "\n"
-                  + i + "installer.pods_project.targets.each do |target|\n"
-                  + i + "  target.build_configurations.each do |config|\n"
-                  + i + "    config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'\n"
-                  + i + "    config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'\n"
-                  + i + "    config.build_settings['CODE_SIGN_IDENTITY'] = ''\n"
-                  + i + "    config.build_settings['PROVISIONING_PROFILE'] = ''\n"
-                  + i + "    config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''\n"
-                  + i + "  end\n"
-                  + i + "end\n"
-              )
-              s = s[:insert_at] + inject + s[insert_at:]
-              print("Injected into post_install (indent='" + base + "')")
-          else:
-              inject = (
-                  "\npost_install do |installer|\n"
+              full_block = m.group(0)       # the entire indented block
+              indent = m.group(1)           # leading whitespace e.g. "  "
+              inner = m.group(2)            # the block content without outer indent
+
+              # De-indent: remove leading indent from every line of the block
+              deindented = re.sub(r'^' + re.escape(indent), '', inner, flags=re.M)
+
+              # Build new top-level post_install that:
+              # 1. calls react_native_post_install (was already in the original inner block)
+              # 2. injects our codesign-disable
+              codesign_block = (
                   "  # " + marker + "\n"
                   "  installer.pods_project.targets.each do |target|\n"
                   "    target.build_configurations.each do |config|\n"
@@ -76,13 +73,50 @@ jobs:
                   "      config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''\n"
                   "    end\n"
                   "  end\n"
-                  "end\n"
               )
-              s += inject
-              print("Created new post_install")
+
+              # Remove the indented post_install from inside target block
+              s = s.replace(full_block, '', 1).rstrip()
+
+              # Find the closing 'end' of the target block and insert our top-level post_install after it
+              # The target block ends with a bare 'end' at column 0
+              last_end = s.rfind('\nend')
+              if last_end == -1:
+                  last_end = len(s)
+              else:
+                  last_end += len('\nend')
+
+              new_post_install = (
+                  "\n\npost_install do |installer|\n"
+                  + deindented.split('\n', 1)[1].rsplit('\n', 1)[0]  # keep original inner content minus first/last line
+                  .rstrip() + "\n"
+                  + codesign_block
+                  + "end\n"
+              )
+
+              s = s[:last_end] + new_post_install
+              print("Moved post_install to top-level and injected codesign disable")
+          else:
+              # No indented post_install found - just append a clean one
+              s = s.rstrip() + "\n\npost_install do |installer|\n"
+              s += "  # " + marker + "\n"
+              s += "  installer.pods_project.targets.each do |target|\n"
+              s += "    target.build_configurations.each do |config|\n"
+              s += "      config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'\n"
+              s += "      config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'\n"
+              s += "      config.build_settings['CODE_SIGN_IDENTITY'] = ''\n"
+              s += "      config.build_settings['PROVISIONING_PROFILE'] = ''\n"
+              s += "      config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''\n"
+              s += "    end\n"
+              s += "  end\n"
+              s += "end\n"
+              print("Appended new top-level post_install")
 
           open(path, "w").write(s)
-          print("Done")
+          print("Podfile patched OK")
+          print("--- RESULT (last 40 lines) ---")
+          lines = s.splitlines()
+          print("\n".join(lines[-40:]))
           PYEOF
           python3 /tmp/patch_podfile.py
 
