@@ -35,30 +35,34 @@ jobs:
       - name: Expo prebuild iOS
         run: cd kaliOS && npx expo prebuild --platform ios --clean --no-install
 
-      # Inject SWIFT_STRICT_CONCURRENCY=minimal inside the single post_install block.
-      # This keeps Swift 6 language mode (so @MainActor is recognised) but disables
-      # strict actor-isolation / Sendable enforcement that causes compilation failures.
-      - name: Patch Podfile - set SWIFT_STRICT_CONCURRENCY minimal
+      # Python script injected via printf '%s\n' (no heredoc / no << in YAML).
+      # Patches the single existing post_install block to:
+      #   1. SWIFT_STRICT_CONCURRENCY = minimal  (Xcode build setting)
+      #   2. SWIFT_TREAT_WARNINGS_AS_ERRORS = NO  (safety)
+      #   3. IPHONEOS_DEPLOYMENT_TARGET = 13.4    (silence SDWebImage 9.0 warning)
+      - name: Patch Podfile - suppress Swift 6 concurrency errors
         run: |
           PODFILE="$GITHUB_WORKSPACE/kaliOS/ios/Podfile"
           PY="$RUNNER_TEMP/patch_podfile.py"
-          printf '%s\n' 'import sys'                                                          >  "$PY"
-          printf '%s\n' 'path = sys.argv[1]'                                                 >> "$PY"
-          printf '%s\n' 'txt = open(path).read()'                                            >> "$PY"
-          printf '%s\n' 'ins  = "\n  # CI: disable Swift 6 strict concurrency\n"'           >> "$PY"
-          printf '%s\n' 'ins += "  installer.pods_project.targets.each do |target|\n"'      >> "$PY"
-          printf '%s\n' 'ins += "    target.build_configurations.each do |config|\n"'       >> "$PY"
+          printf '%s\n' 'import sys'                                                                          >  "$PY"
+          printf '%s\n' 'path = sys.argv[1]'                                                                 >> "$PY"
+          printf '%s\n' 'txt = open(path).read()'                                                            >> "$PY"
+          printf '%s\n' 'ins  = "\n  # CI patch: suppress Swift 6 strict concurrency\n"'                    >> "$PY"
+          printf '%s\n' 'ins += "  installer.pods_project.targets.each do |target|\n"'                      >> "$PY"
+          printf '%s\n' 'ins += "    target.build_configurations.each do |config|\n"'                       >> "$PY"
           printf '%s\n' "ins += \"      config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'\\n\"" >> "$PY"
-          printf '%s\n' 'ins += "    end\n  end\n"'                                           >> "$PY"
-          printf '%s\n' 'needle = "post_install do |installer|"'                             >> "$PY"
-          printf '%s\n' 'txt = txt.replace(needle, needle + ins, 1)'                         >> "$PY"
-          printf '%s\n' 'open(path, "w").write(txt)'                                         >> "$PY"
+          printf '%s\n' "ins += \"      config.build_settings['SWIFT_TREAT_WARNINGS_AS_ERRORS'] = 'NO'\\n\"" >> "$PY"
+          printf '%s\n' "ins += \"      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '13.4'\\n\"" >> "$PY"
+          printf '%s\n' 'ins += "    end\n  end\n"'                                                           >> "$PY"
+          printf '%s\n' 'needle = "post_install do |installer|"'                                             >> "$PY"
+          printf '%s\n' 'txt = txt.replace(needle, needle + ins, 1)'                                         >> "$PY"
+          printf '%s\n' 'open(path, "w").write(txt)'                                                         >> "$PY"
           echo '--- Python script ---'
           cat "$PY"
           echo '--- Running patch ---'
           python3 "$PY" "$PODFILE"
-          echo '--- Podfile post_install block ---'
-          tail -25 "$PODFILE"
+          echo '--- Podfile post_install tail ---'
+          tail -30 "$PODFILE"
 
       - name: Pod install
         run: |
@@ -105,14 +109,16 @@ jobs:
             EXPANDED_CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             SWIFT_SERIALIZE_DEBUGGING_OPTIONS=NO \
+            SWIFT_STRICT_CONCURRENCY=minimal \
+            SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
             2>&1 | tee "$LOG_FILE"
 
           BUILD_EXIT=${PIPESTATUS[0]}
           if [ $BUILD_EXIT -ne 0 ]; then
             echo "===== ERREURS SWIFT ====="
-            grep -E '^.+error: ' "$LOG_FILE" | head -60
+            grep -E '^.+error: ' "$LOG_FILE" | head -80
             echo "===== RAW TAIL ====="
-            tail -60 "$LOG_FILE"
+            tail -80 "$LOG_FILE"
             exit 1
           fi
 
@@ -142,9 +148,9 @@ jobs:
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: AgonPreview-unsigned-ipa
-          path: ${{ runner.temp }}/AgonPreview-unsigned.ipa
-          retention-days: 30
+            name: AgonPreview-unsigned-ipa
+            path: ${{ runner.temp }}/AgonPreview-unsigned.ipa
+            retention-days: 30
 
       - name: Upload logs on failure
         if: failure()
