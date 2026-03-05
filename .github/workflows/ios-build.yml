@@ -1,4 +1,4 @@
-name: iOS IPA Build (Unsigned)
+name: iOS IPA Build
 
 on:
   push:
@@ -22,35 +22,33 @@ jobs:
           cache-dependency-path: kaliOS/package-lock.json
 
       - name: Install dependencies
-        run: |
-          cd kaliOS
-          npm ci
+        run: cd kaliOS && npm ci
 
       - name: Install Expo CLI
-        run: |
-          npm install -g expo
+        run: npm install -g expo
 
-      - name: Expo prebuild (iOS)
-        run: |
-          cd kaliOS
-          npx expo prebuild --platform ios --clean --no-install
+      - name: Expo prebuild iOS
+        run: cd kaliOS && npx expo prebuild --platform ios --clean --no-install
 
-      - name: Patch Podfile (merge into existing post_install)
+      - name: Upload Podfile (debug)
+        uses: actions/upload-artifact@v4
+        with:
+          name: podfile-raw
+          path: ${{ github.workspace }}/kaliOS/ios/Podfile
+          retention-days: 7
+
+      - name: Patch Podfile - inject codesign disable into existing post_install
         run: |
-          python3 - <<'PYEOF'
+          python3 << 'PYEOF'
           import os, re
-
-          podfile_path = os.path.join(os.environ["GITHUB_WORKSPACE"], "kaliOS", "ios", "Podfile")
-          with open(podfile_path, "r", encoding="utf-8") as f:
-              s = f.read()
-
+          path = os.path.join(os.environ["GITHUB_WORKSPACE"], "kaliOS", "ios", "Podfile")
+          s = open(path).read()
           marker = "SUKIT_DISABLE_PODS_CODESIGN"
           if marker in s:
-              print("Podfile already patched")
+              print("already patched")
               raise SystemExit(0)
-
-          ruby = f"""
-            # {marker}
+          inject = """
+            # SUKIT_DISABLE_PODS_CODESIGN
             installer.pods_project.targets.each do |target|
               target.build_configurations.each do |config|
                 config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
@@ -61,19 +59,15 @@ jobs:
               end
             end
           """
-
-          m = re.search(r"^post_install do \|installer\|\s*$", s, flags=re.M)
+          m = re.search(r"^post_install do \|installer\|\s*\n", s, flags=re.M)
           if m:
-              s = s[:m.end()] + ruby + s[m.end():]
+              s = s[:m.end()] + inject + s[m.end():]
               print("Injected into existing post_install")
           else:
-              s += "\npost_install do |installer|\n" + ruby + "\nend\n"
-              print("Appended single post_install")
-
-          with open(podfile_path, "w", encoding="utf-8") as f:
-              f.write(s)
-
-          print("Podfile patched OK")
+              s += "\npost_install do |installer|\n" + inject + "\nend\n"
+              print("Created new post_install")
+          open(path, "w").write(s)
+          print("Done")
           PYEOF
 
       - name: Pod install
@@ -82,38 +76,30 @@ jobs:
           cd "$GITHUB_WORKSPACE/kaliOS/ios"
           pod install --repo-update 2>&1 | tee "$RUNNER_TEMP/pod-install.log"
 
-      - name: Build .app (unsigned)
+      - name: Build .app unsigned
         run: |
           set -o pipefail
-
           IOS_DIR="$GITHUB_WORKSPACE/kaliOS/ios"
           BUILD_DIR="$RUNNER_TEMP/build"
           LOG_FILE="$RUNNER_TEMP/xcodebuild.log"
           mkdir -p "$BUILD_DIR"
 
-          WORKSPACE="$(find "$IOS_DIR" -maxdepth 2 -name "*.xcworkspace" \
+          WORKSPACE=$(find "$IOS_DIR" -maxdepth 2 -name "*.xcworkspace" \
             -not -name "Pods.xcworkspace" \
-            -not -path "*/xcuserdata/*" | head -1)"
+            -not -path "*/xcuserdata/*" | head -1)
 
           if [ -z "$WORKSPACE" ]; then
-            echo "ERREUR: aucun .xcworkspace trouvé dans $IOS_DIR"
+            echo "ERREUR: aucun .xcworkspace dans $IOS_DIR"
             ls -la "$IOS_DIR"
             exit 1
           fi
 
-          echo "Workspace: $WORKSPACE"
-          echo "=== xcodebuild -list ==="
-          xcodebuild -list -workspace "$WORKSPACE" 2>&1 | tee "$RUNNER_TEMP/xcodebuild-list.log"
+          SCHEME=$(xcodebuild -list -workspace "$WORKSPACE" 2>/dev/null \
+            | awk '/Schemes:/{flag=1;next} /^[[:space:]]*$/{flag=0} flag{gsub(/^[[:space:]]+/,""); print; exit}')
+          [ -z "$SCHEME" ] && SCHEME=$(basename "$WORKSPACE" .xcworkspace)
 
-          SCHEME="$(xcodebuild -list -workspace "$WORKSPACE" 2>/dev/null \
-            | awk '/Schemes:/{flag=1;next} /^$/{flag=0} flag{print;exit}' \
-            | sed 's/^[[:space:]]*//')"
-
-          if [ -z "$SCHEME" ]; then
-            SCHEME="$(basename "$WORKSPACE" .xcworkspace)"
-          fi
-
-          echo "Scheme: $SCHEME"
+          echo "Workspace : $WORKSPACE"
+          echo "Scheme    : $SCHEME"
 
           xcodebuild build \
             -workspace "$WORKSPACE" \
@@ -131,44 +117,42 @@ jobs:
 
           BUILD_EXIT=${PIPESTATUS[0]}
           if [ $BUILD_EXIT -ne 0 ]; then
-            echo "=== BUILD FAILED (errors) ==="
-            grep -E "error:|fatal error:" "$LOG_FILE" | tail -80 || true
+            echo "===== ERRORS ====="
+            grep "error:" "$LOG_FILE" | grep -v "^note" | tail -50
             exit 1
           fi
 
-      - name: Package .ipa (unsigned)
+          echo "===== Apps generees ====="
+          find "$BUILD_DIR" -name "*.app" -not -name "*.appex"
+
+      - name: Package .ipa
         run: |
           BUILD_DIR="$RUNNER_TEMP/build"
+          APP_PATH=$(find "$BUILD_DIR/Build/Products" -maxdepth 3 \
+            -path "*Release-iphoneos*" -name "*.app" \
+            -not -name "*.appex" 2>/dev/null | head -1)
 
-          echo "=== Apps trouvées ==="
-          find "$BUILD_DIR" -name "*.app" 2>/dev/null || true
-
-          APP_PATH="$(find "$BUILD_DIR/Build/Products" -maxdepth 3 -name "*.app" \
-            -path "*Release-iphoneos*" \
-            -not -name "*.appex" 2>/dev/null | head -1)"
-
-          echo "APP_PATH: $APP_PATH"
+          echo "APP: $APP_PATH"
           if [ -z "$APP_PATH" ]; then
-            echo "ERREUR: aucun .app device (Release-iphoneos) trouvé"
-            find "$BUILD_DIR/Build/Products" -maxdepth 5 2>/dev/null || true
+            find "$BUILD_DIR" -maxdepth 6
             exit 1
           fi
 
           mkdir -p "$RUNNER_TEMP/Payload"
           cp -R "$APP_PATH" "$RUNNER_TEMP/Payload/"
-
           cd "$RUNNER_TEMP"
           zip -r AgonPreview-unsigned.ipa Payload
           ls -lh AgonPreview-unsigned.ipa
+          echo "IPA OK"
 
-      - name: Upload IPA artifact
+      - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: AgonPreview-unsigned-ipa
           path: ${{ runner.temp }}/AgonPreview-unsigned.ipa
           retention-days: 30
 
-      - name: Upload logs (on failure)
+      - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -176,5 +160,4 @@ jobs:
           path: |
             ${{ runner.temp }}/pod-install.log
             ${{ runner.temp }}/xcodebuild.log
-            ${{ runner.temp }}/xcodebuild-list.log
           retention-days: 7
