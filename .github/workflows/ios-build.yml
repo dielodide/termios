@@ -30,101 +30,39 @@ jobs:
       - name: Expo prebuild iOS
         run: cd kaliOS && npx expo prebuild --platform ios --clean --no-install
 
-      - name: Patch Podfile - move post_install to top-level
+      - name: Inject codesign xcconfig (overrides all targets)
         run: |
-          cat > /tmp/patch_podfile.py << 'PYEOF'
-          import os, re
+          cat > /tmp/no-codesign.xcconfig << 'EOF'
+          CODE_SIGNING_ALLOWED = NO
+          CODE_SIGNING_REQUIRED = NO
+          CODE_SIGN_IDENTITY =
+          PROVISIONING_PROFILE =
+          EXPANDED_CODE_SIGN_IDENTITY =
+          EOF
 
-          path = os.path.join(os.environ["GITHUB_WORKSPACE"], "kaliOS", "ios", "Podfile")
-          s = open(path).read()
-
-          marker = "SUKIT_DISABLE_PODS_CODESIGN"
-          if marker in s:
-              print("Already patched, skipping")
-              exit(0)
-
-          # Find the post_install block inside target (indented)
-          # Pattern: indented post_install...end block
-          m = re.search(
-              r'^([ \t]+)(post_install do \|installer\|.*?^\1end)$',
-              s,
-              flags=re.M | re.S
-          )
-
-          if m:
-              full_block = m.group(0)       # the entire indented block
-              indent = m.group(1)           # leading whitespace e.g. "  "
-              inner = m.group(2)            # the block content without outer indent
-
-              # De-indent: remove leading indent from every line of the block
-              deindented = re.sub(r'^' + re.escape(indent), '', inner, flags=re.M)
-
-              # Build new top-level post_install that:
-              # 1. calls react_native_post_install (was already in the original inner block)
-              # 2. injects our codesign-disable
-              codesign_block = (
-                  "  # " + marker + "\n"
-                  "  installer.pods_project.targets.each do |target|\n"
-                  "    target.build_configurations.each do |config|\n"
-                  "      config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'\n"
-                  "      config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'\n"
-                  "      config.build_settings['CODE_SIGN_IDENTITY'] = ''\n"
-                  "      config.build_settings['PROVISIONING_PROFILE'] = ''\n"
-                  "      config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''\n"
-                  "    end\n"
-                  "  end\n"
-              )
-
-              # Remove the indented post_install from inside target block
-              s = s.replace(full_block, '', 1).rstrip()
-
-              # Find the closing 'end' of the target block and insert our top-level post_install after it
-              # The target block ends with a bare 'end' at column 0
-              last_end = s.rfind('\nend')
-              if last_end == -1:
-                  last_end = len(s)
-              else:
-                  last_end += len('\nend')
-
-              new_post_install = (
-                  "\n\npost_install do |installer|\n"
-                  + deindented.split('\n', 1)[1].rsplit('\n', 1)[0]  # keep original inner content minus first/last line
-                  .rstrip() + "\n"
-                  + codesign_block
-                  + "end\n"
-              )
-
-              s = s[:last_end] + new_post_install
-              print("Moved post_install to top-level and injected codesign disable")
-          else:
-              # No indented post_install found - just append a clean one
-              s = s.rstrip() + "\n\npost_install do |installer|\n"
-              s += "  # " + marker + "\n"
-              s += "  installer.pods_project.targets.each do |target|\n"
-              s += "    target.build_configurations.each do |config|\n"
-              s += "      config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'\n"
-              s += "      config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'\n"
-              s += "      config.build_settings['CODE_SIGN_IDENTITY'] = ''\n"
-              s += "      config.build_settings['PROVISIONING_PROFILE'] = ''\n"
-              s += "      config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''\n"
-              s += "    end\n"
-              s += "  end\n"
-              s += "end\n"
-              print("Appended new top-level post_install")
-
-          open(path, "w").write(s)
-          print("Podfile patched OK")
-          print("--- RESULT (last 40 lines) ---")
-          lines = s.splitlines()
-          print("\n".join(lines[-40:]))
-          PYEOF
-          python3 /tmp/patch_podfile.py
+          PODFILE="$GITHUB_WORKSPACE/kaliOS/ios/Podfile"
+          if ! grep -q 'no-codesign.xcconfig' "$PODFILE"; then
+            # Append xcconfig include at the very top of Podfile
+            echo "xcodeproj_config = '/tmp/no-codesign.xcconfig'" | cat - "$PODFILE" > /tmp/pf_tmp && mv /tmp/pf_tmp "$PODFILE"
+            echo "xcconfig override injected in Podfile"
+          fi
 
       - name: Pod install
         run: |
           set -o pipefail
           cd "$GITHUB_WORKSPACE/kaliOS/ios"
           pod install --repo-update 2>&1 | tee "$RUNNER_TEMP/pod-install.log"
+
+      - name: Create codesign override xcconfig
+        run: |
+          cat > /tmp/no-codesign.xcconfig << 'EOF'
+          CODE_SIGNING_ALLOWED = NO
+          CODE_SIGNING_REQUIRED = NO
+          CODE_SIGN_IDENTITY =
+          PROVISIONING_PROFILE =
+          EXPANDED_CODE_SIGN_IDENTITY =
+          EOF
+          echo "xcconfig created"
 
       - name: Build .app unsigned
         run: |
@@ -158,17 +96,19 @@ jobs:
             -sdk iphoneos \
             -destination "generic/platform=iOS" \
             -derivedDataPath "$BUILD_DIR" \
+            -xcconfig /tmp/no-codesign.xcconfig \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             PROVISIONING_PROFILE="" \
+            EXPANDED_CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             2>&1 | tee "$LOG_FILE"
 
           BUILD_EXIT=${PIPESTATUS[0]}
           if [ $BUILD_EXIT -ne 0 ]; then
             echo "===== BUILD ERRORS ====="
-            grep "error:" "$LOG_FILE" | grep -v "^note" | tail -50
+            grep "error:" "$LOG_FILE" | grep -v "^note" | tail -80
             exit 1
           fi
 
