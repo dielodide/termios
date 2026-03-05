@@ -30,9 +30,6 @@ jobs:
       - name: Install Expo CLI
         run: npm install -g expo-cli @expo/cli
 
-      - name: Install xcpretty
-        run: gem install xcpretty
-
       - name: Expo Prebuild iOS
         run: |
           cd kaliOS
@@ -44,49 +41,43 @@ jobs:
         run: |
           SCHEME=$(cd kaliOS/ios && ls *.xcworkspace | sed 's/.xcworkspace//')
           echo "name=$SCHEME" >> $GITHUB_OUTPUT
-          echo "Scheme détecté: $SCHEME"
+          echo "Scheme: $SCHEME"
 
-      - name: Build Archive (unsigned)
+      - name: Build .app (unsigned)
         run: |
+          BUILD_DIR=$RUNNER_TEMP/build
+          mkdir -p $BUILD_DIR
           cd kaliOS/ios
-          xcodebuild \
+          xcodebuild build \
             -workspace "${{ steps.scheme.outputs.name }}.xcworkspace" \
             -scheme "${{ steps.scheme.outputs.name }}" \
             -configuration Release \
             -sdk iphoneos \
-            -archivePath $RUNNER_TEMP/app.xcarchive \
+            -derivedDataPath $BUILD_DIR \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             PROVISIONING_PROFILE="" \
-            clean archive 2>&1 | xcpretty || true
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            2>&1 | tail -50
+          echo "=== Build terminé ==="
 
-      - name: Debug archive structure
+      - name: Find and package .ipa
         run: |
-          echo "=== Contenu de RUNNER_TEMP ==="
-          ls -la $RUNNER_TEMP/
-          echo "=== Contenu xcarchive ==="
-          find $RUNNER_TEMP/app.xcarchive -type f -name "*.app" 2>/dev/null || echo "Aucun .app trouvé"
-          find $RUNNER_TEMP/app.xcarchive -maxdepth 4 2>/dev/null || echo "xcarchive vide ou absent"
-          echo "=== Cherche .app ailleurs ==="
-          find $RUNNER_TEMP -name "*.app" -maxdepth 6 2>/dev/null
-          find ~/Library/Developer/Xcode -name "*.xcarchive" 2>/dev/null | head -5
+          BUILD_DIR=$RUNNER_TEMP/build
+          echo "=== Cherche .app dans DerivedData ==="
+          find $BUILD_DIR -name "*.app" -not -path "*/simulator/*" 2>/dev/null
 
-      - name: Package .ipa
-        run: |
-          # Cherche le .app dans l'archive ou ailleurs
-          APP_PATH=$(find $RUNNER_TEMP/app.xcarchive -name "*.app" -maxdepth 5 2>/dev/null | head -1)
+          APP_PATH=$(find $BUILD_DIR/Build/Products -name "*.app" \
+            -not -path "*simulator*" \
+            -not -name "*.appex" \
+            -maxdepth 4 2>/dev/null | head -1)
 
-          # Si pas trouvé dans RUNNER_TEMP, cherche dans Xcode DerivedData
-          if [ -z "$APP_PATH" ]; then
-            APP_PATH=$(find ~/Library/Developer/Xcode -name "*.xcarchive" 2>/dev/null | head -1)
-            APP_PATH=$(find "$APP_PATH" -name "*.app" 2>/dev/null | head -1)
-          fi
-
-          echo "APP_PATH trouvé: $APP_PATH"
+          echo "APP_PATH: $APP_PATH"
 
           if [ -z "$APP_PATH" ]; then
-            echo "ERREUR: Aucun .app trouvé — le build a peut-être échoué silencieusement"
+            echo "Tous les .app trouvés:"
+            find $BUILD_DIR -name "*.app" 2>/dev/null
             exit 1
           fi
 
@@ -94,7 +85,8 @@ jobs:
           cp -r "$APP_PATH" $RUNNER_TEMP/Payload/
           cd $RUNNER_TEMP
           zip -r AgonPreview-unsigned.ipa Payload
-          echo "✅ IPA créé: $(ls -lh $RUNNER_TEMP/AgonPreview-unsigned.ipa)"
+          ls -lh AgonPreview-unsigned.ipa
+          echo "✅ IPA créé avec succès"
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
