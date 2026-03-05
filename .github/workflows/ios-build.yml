@@ -42,12 +42,17 @@ jobs:
           SCHEME=$(cd kaliOS/ios && ls *.xcworkspace | sed 's/.xcworkspace//')
           echo "name=$SCHEME" >> $GITHUB_OUTPUT
           echo "Scheme: $SCHEME"
+          echo "=== Schemes disponibles ==="
+          cd kaliOS/ios && xcodebuild -list 2>&1 || true
 
       - name: Build .app (unsigned)
         run: |
+          set -o pipefail
           BUILD_DIR=$RUNNER_TEMP/build
           mkdir -p $BUILD_DIR
+          LOG_FILE=$RUNNER_TEMP/xcodebuild.log
           cd kaliOS/ios
+
           xcodebuild build \
             -workspace "${{ steps.scheme.outputs.name }}.xcworkspace" \
             -scheme "${{ steps.scheme.outputs.name }}" \
@@ -59,25 +64,36 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             PROVISIONING_PROFILE="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            2>&1 | tail -50
-          echo "=== Build terminé ==="
+            2>&1 | tee $LOG_FILE
+
+          BUILD_EXIT=${PIPESTATUS[0]}
+
+          if [ $BUILD_EXIT -ne 0 ]; then
+            echo "=== BUILD FAILED — Dernières erreurs ==="
+            grep -E "error:|warning:|note:" $LOG_FILE | tail -30
+            exit 1
+          fi
+
+          echo "=== Contenu DerivedData ==="
+          find $BUILD_DIR/Build/Products -maxdepth 3 2>/dev/null || echo "Vide"
 
       - name: Find and package .ipa
         run: |
           BUILD_DIR=$RUNNER_TEMP/build
-          echo "=== Cherche .app dans DerivedData ==="
-          find $BUILD_DIR -name "*.app" -not -path "*/simulator/*" 2>/dev/null
+
+          echo "=== Tous les .app trouvés ==="
+          find $BUILD_DIR -name "*.app" 2>/dev/null
 
           APP_PATH=$(find $BUILD_DIR/Build/Products -name "*.app" \
             -not -path "*simulator*" \
+            -not -path "*SimulatorSDK*" \
             -not -name "*.appex" \
-            -maxdepth 4 2>/dev/null | head -1)
+            2>/dev/null | head -1)
 
-          echo "APP_PATH: $APP_PATH"
+          echo "APP_PATH retenu: $APP_PATH"
 
           if [ -z "$APP_PATH" ]; then
-            echo "Tous les .app trouvés:"
-            find $BUILD_DIR -name "*.app" 2>/dev/null
+            echo "ERREUR: Aucun .app device trouvé"
             exit 1
           fi
 
@@ -87,6 +103,14 @@ jobs:
           zip -r AgonPreview-unsigned.ipa Payload
           ls -lh AgonPreview-unsigned.ipa
           echo "✅ IPA créé avec succès"
+
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: ${{ runner.temp }}/xcodebuild.log
+          retention-days: 7
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
