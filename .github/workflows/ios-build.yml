@@ -7,17 +7,13 @@ on:
 
 jobs:
   build-ios:
-    # macos-14 ships Xcode 15.4 by default.
-    # ExpoModulesCore 55.x declares swift_version=6 but has genuine Swift 6
-    # strict-concurrency violations -- it was designed for Xcode 15 / Swift 5.
-    # Xcode 16.2 enforces Swift 6 and cannot be suppressed for Swift-6-mode pods.
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 90
 
     steps:
-      - name: Select Xcode 15.4
+      - name: Select Xcode 16.2
         run: |
-          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
           xcodebuild -version
 
       - name: Checkout repo
@@ -33,11 +29,80 @@ jobs:
       - name: Install dependencies
         run: cd kaliOS && npm ci
 
-      - name: Install Expo CLI
-        run: npm install -g expo
+      # ---------------------------------------------------------------
+      # Patch ExpoModulesCore Swift source BEFORE expo prebuild
+      # Root cause: EMC 55.x declares swift_version="6.0" but ships
+      # incomplete Swift-6 concurrency fixes (issue #42525 expo/expo).
+      # Fix 1 – ViewDefinition.swift: move @MainActor out of conformance
+      #          list (Swift-5 syntax) so SWIFT_VERSION=5 compiles it.
+      # Fix 2 – PersistentFileLog.swift: mark handler as @Sendable.
+      # ---------------------------------------------------------------
+      - name: Patch ExpoModulesCore Swift source
+        run: |
+          EMC="$GITHUB_WORKSPACE/kaliOS/node_modules/expo-modules-core/ios"
+
+          patch_file() {
+            local f="$1"; local from="$2"; local to="$3"
+            [ -f "$f" ] || return 0
+            if grep -qF "$from" "$f"; then
+              sed -i '' "s|${from}|${to}|g" "$f"
+              echo "Patched: $f"
+            else
+              echo "Pattern not found (skip): $f"
+            fi
+          }
+
+          # ViewDefinition.swift
+          patch_file "$EMC/Core/ViewDefinition.swift" \
+            "extension UIView: @MainActor AnyArgument" \
+            "@MainActor extension UIView: AnyArgument"
+          patch_file "$EMC/Core/Views/ViewDefinition.swift" \
+            "extension UIView: @MainActor AnyArgument" \
+            "@MainActor extension UIView: AnyArgument"
+
+          # PersistentFileLog.swift
+          patch_file "$EMC/Core/Logging/PersistentFileLog.swift" \
+            "typealias PersistentFileLogCompletionHandler = (Error?) -> Void" \
+            "typealias PersistentFileLogCompletionHandler = @Sendable (Error?) -> Void"
+
+          # Broader fallback: any remaining `: @MainActor <Protocol>` in class/extension lines
+          find "$EMC" -name "*.swift" | while IFS= read -r f; do
+            grep -qF ': @MainActor ' "$f" 2>/dev/null || continue
+            # Only rewrite lines that start with class/extension/struct/enum
+            sed -i '' '/^\(class\|extension\|struct\|enum\) .* @MainActor /! {
+              /: @MainActor [A-Z]/s/\(.*\): @MainActor \([A-Za-z]\)/@MainActor \1: \2/
+            }' "$f" 2>/dev/null || true
+            echo "Broad-patch: $f"
+          done
+
+          echo "=== Source patch done ==="
 
       - name: Expo prebuild iOS
         run: cd kaliOS && npx expo prebuild --platform ios --clean --no-install
+
+      # ---------------------------------------------------------------
+      # Podfile patch: force SWIFT_VERSION=5 for ExpoModulesCore only.
+      # In Swift-5 mode (Swift 5.10 under Xcode 16.2) strict concurrency
+      # is NOT enforced, which silences the remaining actor-isolation
+      # errors that our source patches don't cover.
+      # Multiple post_install blocks are fully supported by CocoaPods.
+      # ---------------------------------------------------------------
+      - name: Patch Podfile – SWIFT_VERSION=5 for ExpoModulesCore
+        run: |
+          PODFILE="$GITHUB_WORKSPACE/kaliOS/ios/Podfile"
+          printf '\npost_install do |installer|\n' >> "$PODFILE"
+          printf '  expo_swift5_targets = %%w[ExpoModulesCore ExpoModulesJSI]\n' >> "$PODFILE"
+          printf '  installer.pods_project.targets.each do |target|\n' >> "$PODFILE"
+          printf '    next unless expo_swift5_targets.include?(target.name)\n' >> "$PODFILE"
+          printf '    target.build_configurations.each do |config|\n' >> "$PODFILE"
+          printf '      config.build_settings["SWIFT_VERSION"] = "5"\n' >> "$PODFILE"
+          printf '      base = config.build_settings["OTHER_SWIFT_FLAGS"] || "$(inherited)"\n' >> "$PODFILE"
+          printf '      config.build_settings["OTHER_SWIFT_FLAGS"] = "#{base} -strict-concurrency=minimal"\n' >> "$PODFILE"
+          printf '    end\n' >> "$PODFILE"
+          printf '  end\n' >> "$PODFILE"
+          printf 'end\n' >> "$PODFILE"
+          echo "=== Podfile tail ==="
+          tail -20 "$PODFILE"
 
       - name: Pod install
         run: |
@@ -58,7 +123,7 @@ jobs:
             -not -path "*/xcuserdata/*" | head -1)
 
           if [ -z "$WORKSPACE" ]; then
-            echo "ERREUR: aucun .xcworkspace"
+            echo "ERREUR: aucun .xcworkspace trouvé"
             ls -la "$IOS_DIR"
             exit 1
           fi
@@ -95,7 +160,7 @@ jobs:
             exit 1
           fi
 
-          echo "===== Apps trouvees ====="
+          echo "===== Apps trouvées ====="
           find "$BUILD_DIR" -name "*.app" -not -name "*.appex"
 
       - name: Package .ipa
