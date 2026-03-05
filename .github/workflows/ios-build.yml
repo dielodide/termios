@@ -34,16 +34,32 @@ jobs:
         run: |
           cd kaliOS
           npx expo prebuild --platform ios --clean --no-install
-          cd ios && pod install --repo-update
 
-      - name: Inspect ios/ directory
+      - name: Patch Podfile — disable code signing on all pods
         run: |
-          echo "=== Contenu de kaliOS/ios/ ==="
-          ls -la $GITHUB_WORKSPACE/kaliOS/ios/
-          echo "=== Workspaces ==="
-          find $GITHUB_WORKSPACE/kaliOS/ios -name "*.xcworkspace" -maxdepth 2
-          echo "=== Schemes ==="
-          find $GITHUB_WORKSPACE/kaliOS/ios -name "*.xcworkspace" -maxdepth 2 | head -1 | xargs -I{} xcodebuild -list -workspace {} 2>&1 || true
+          PODFILE=$GITHUB_WORKSPACE/kaliOS/ios/Podfile
+          echo "" >> $PODFILE
+          cat >> $PODFILE << 'EOF'
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+      config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+      config.build_settings['CODE_SIGN_IDENTITY'] = ''
+      config.build_settings['PROVISIONING_PROFILE'] = ''
+      config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
+    end
+  end
+end
+EOF
+          echo "=== Podfile patché ==="
+          tail -20 $PODFILE
+
+      - name: Pod install
+        run: |
+          cd $GITHUB_WORKSPACE/kaliOS/ios
+          pod install --repo-update
 
       - name: Build .app (unsigned)
         run: |
@@ -51,21 +67,13 @@ jobs:
           BUILD_DIR=$RUNNER_TEMP/build
           LOG_FILE=$RUNNER_TEMP/xcodebuild.log
           mkdir -p $BUILD_DIR
-
           IOS_DIR=$GITHUB_WORKSPACE/kaliOS/ios
 
-          # Détecte le workspace avec path absolu
-          WORKSPACE=$(find $IOS_DIR -name "*.xcworkspace" -maxdepth 2 -not -path "*/xcuserdata/*" | head -1)
-          echo "Workspace trouvé: $WORKSPACE"
-
-          if [ -z "$WORKSPACE" ]; then
-            echo "ERREUR: Aucun .xcworkspace trouvé dans $IOS_DIR"
-            ls -la $IOS_DIR
-            exit 1
-          fi
-
-          # Déduit le scheme du nom du workspace
+          WORKSPACE=$(find $IOS_DIR -name "*.xcworkspace" -maxdepth 2 \
+            -not -path "*/xcuserdata/*" \
+            -not -path "*/Pods/*" | head -1)
           SCHEME=$(basename "$WORKSPACE" .xcworkspace)
+          echo "Workspace: $WORKSPACE"
           echo "Scheme: $SCHEME"
 
           xcodebuild build \
@@ -84,13 +92,14 @@ jobs:
           BUILD_EXIT=${PIPESTATUS[0]}
 
           if [ $BUILD_EXIT -ne 0 ]; then
-            echo "=== BUILD FAILED — Erreurs ==="
-            grep "error:" $LOG_FILE | grep -v "^note" | tail -20
+            echo ""
+            echo "=== ERREURS DE BUILD ==="
+            grep -E "^.+error:.+" $LOG_FILE | grep -v "responseFileError" | tail -30
             exit 1
           fi
 
           echo "=== .app générés ==="
-          find $BUILD_DIR -name "*.app" 2>/dev/null
+          find $BUILD_DIR -name "*.app" -not -name "*.appex" 2>/dev/null
 
       - name: Package .ipa
         run: |
@@ -105,8 +114,7 @@ jobs:
           echo "APP_PATH: $APP_PATH"
 
           if [ -z "$APP_PATH" ]; then
-            echo "Tous les fichiers dans build:"
-            find $BUILD_DIR -maxdepth 5 2>/dev/null
+            find $BUILD_DIR -maxdepth 6 2>/dev/null
             exit 1
           fi
 
