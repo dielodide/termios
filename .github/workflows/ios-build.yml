@@ -35,29 +35,30 @@ jobs:
       - name: Expo prebuild iOS
         run: cd kaliOS && npx expo prebuild --platform ios --clean --no-install
 
-      # Inject SWIFT_VERSION=5 inside the single existing post_install block.
-      # printf '%s\n' prints the argument as-is (no \n -> newline conversion in %s args).
-      - name: Patch Podfile - inject Swift 5 inside existing post_install
+      # Inject SWIFT_STRICT_CONCURRENCY=minimal inside the single post_install block.
+      # This keeps Swift 6 language mode (so @MainActor is recognised) but disables
+      # strict actor-isolation / Sendable enforcement that causes compilation failures.
+      - name: Patch Podfile - set SWIFT_STRICT_CONCURRENCY minimal
         run: |
           PODFILE="$GITHUB_WORKSPACE/kaliOS/ios/Podfile"
           PY="$RUNNER_TEMP/patch_podfile.py"
-          printf '%s\n' 'import sys'                                                         >  "$PY"
-          printf '%s\n' 'path = sys.argv[1]'                                                >> "$PY"
-          printf '%s\n' 'txt = open(path).read()'                                           >> "$PY"
-          printf '%s\n' 'ins  = "\n  # CI: force Swift 5 (suppress Swift 6 errors)\n"'    >> "$PY"
-          printf '%s\n' 'ins += "  installer.pods_project.targets.each do |target|\n"'     >> "$PY"
-          printf '%s\n' 'ins += "    target.build_configurations.each do |config|\n"'      >> "$PY"
-          printf '%s\n' "ins += \"      config.build_settings['SWIFT_VERSION'] = '5'\\n\"" >> "$PY"
-          printf '%s\n' 'ins += "    end\n  end\n"'                                          >> "$PY"
-          printf '%s\n' 'needle = "post_install do |installer|"'                            >> "$PY"
-          printf '%s\n' 'txt = txt.replace(needle, needle + ins, 1)'                        >> "$PY"
-          printf '%s\n' 'open(path, "w").write(txt)'                                        >> "$PY"
+          printf '%s\n' 'import sys'                                                          >  "$PY"
+          printf '%s\n' 'path = sys.argv[1]'                                                 >> "$PY"
+          printf '%s\n' 'txt = open(path).read()'                                            >> "$PY"
+          printf '%s\n' 'ins  = "\n  # CI: disable Swift 6 strict concurrency\n"'           >> "$PY"
+          printf '%s\n' 'ins += "  installer.pods_project.targets.each do |target|\n"'      >> "$PY"
+          printf '%s\n' 'ins += "    target.build_configurations.each do |config|\n"'       >> "$PY"
+          printf '%s\n' "ins += \"      config.build_settings['SWIFT_STRICT_CONCURRENCY'] = 'minimal'\\n\"" >> "$PY"
+          printf '%s\n' 'ins += "    end\n  end\n"'                                           >> "$PY"
+          printf '%s\n' 'needle = "post_install do |installer|"'                             >> "$PY"
+          printf '%s\n' 'txt = txt.replace(needle, needle + ins, 1)'                         >> "$PY"
+          printf '%s\n' 'open(path, "w").write(txt)'                                         >> "$PY"
           echo '--- Python script ---'
           cat "$PY"
           echo '--- Running patch ---'
           python3 "$PY" "$PODFILE"
-          echo '--- Podfile tail ---'
-          tail -20 "$PODFILE"
+          echo '--- Podfile post_install block ---'
+          tail -25 "$PODFILE"
 
       - name: Pod install
         run: |
