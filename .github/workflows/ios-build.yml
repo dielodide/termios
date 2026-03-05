@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - Aok
-  workflow_dispatch:  # permet de lancer manuellement
+  workflow_dispatch:
 
 jobs:
   build-ios:
@@ -12,11 +12,9 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # 1. Checkout du repo
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # 2. Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -24,24 +22,23 @@ jobs:
           cache: 'npm'
           cache-dependency-path: kaliOS/package-lock.json
 
-      # 3. Install dépendances
       - name: Install dependencies
         run: |
           cd kaliOS
           npm ci
 
-      # 4. Install Expo CLI
       - name: Install Expo CLI
         run: npm install -g expo-cli @expo/cli
 
-      # 5. Expo Prebuild — génère le dossier ios/ natif
+      - name: Install xcpretty
+        run: gem install xcpretty
+
       - name: Expo Prebuild iOS
         run: |
           cd kaliOS
           npx expo prebuild --platform ios --clean --no-install
           cd ios && pod install --repo-update
 
-      # 6. Trouver le nom du scheme automatiquement
       - name: Get scheme name
         id: scheme
         run: |
@@ -49,7 +46,6 @@ jobs:
           echo "name=$SCHEME" >> $GITHUB_OUTPUT
           echo "Scheme détecté: $SCHEME"
 
-      # 7. Build xcodebuild — UNSIGNED
       - name: Build Archive (unsigned)
         run: |
           cd kaliOS/ios
@@ -63,28 +59,46 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             PROVISIONING_PROFILE="" \
-            clean archive | xcpretty
+            clean archive 2>&1 | xcpretty || true
 
-      # 8. Package en .ipa
+      - name: Debug archive structure
+        run: |
+          echo "=== Contenu de RUNNER_TEMP ==="
+          ls -la $RUNNER_TEMP/
+          echo "=== Contenu xcarchive ==="
+          find $RUNNER_TEMP/app.xcarchive -type f -name "*.app" 2>/dev/null || echo "Aucun .app trouvé"
+          find $RUNNER_TEMP/app.xcarchive -maxdepth 4 2>/dev/null || echo "xcarchive vide ou absent"
+          echo "=== Cherche .app ailleurs ==="
+          find $RUNNER_TEMP -name "*.app" -maxdepth 6 2>/dev/null
+          find ~/Library/Developer/Xcode -name "*.xcarchive" 2>/dev/null | head -5
+
       - name: Package .ipa
         run: |
+          # Cherche le .app dans l'archive ou ailleurs
+          APP_PATH=$(find $RUNNER_TEMP/app.xcarchive -name "*.app" -maxdepth 5 2>/dev/null | head -1)
+
+          # Si pas trouvé dans RUNNER_TEMP, cherche dans Xcode DerivedData
+          if [ -z "$APP_PATH" ]; then
+            APP_PATH=$(find ~/Library/Developer/Xcode -name "*.xcarchive" 2>/dev/null | head -1)
+            APP_PATH=$(find "$APP_PATH" -name "*.app" 2>/dev/null | head -1)
+          fi
+
+          echo "APP_PATH trouvé: $APP_PATH"
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERREUR: Aucun .app trouvé — le build a peut-être échoué silencieusement"
+            exit 1
+          fi
+
           mkdir -p $RUNNER_TEMP/Payload
-          cp -r $RUNNER_TEMP/app.xcarchive/Products/Applications/*.app \
-            $RUNNER_TEMP/Payload/
+          cp -r "$APP_PATH" $RUNNER_TEMP/Payload/
           cd $RUNNER_TEMP
           zip -r AgonPreview-unsigned.ipa Payload
-          echo "IPA créé: $RUNNER_TEMP/AgonPreview-unsigned.ipa"
+          echo "✅ IPA créé: $(ls -lh $RUNNER_TEMP/AgonPreview-unsigned.ipa)"
 
-      # 9. Upload l'artifact (téléchargeable depuis GitHub)
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: AgonPreview-unsigned-ipa
           path: ${{ runner.temp }}/AgonPreview-unsigned.ipa
           retention-days: 30
-
-      # 10. Affiche la taille du fichier
-      - name: Build info
-        run: |
-          ls -lh $RUNNER_TEMP/AgonPreview-unsigned.ipa
-          echo "✅ Build terminé avec succès!"
