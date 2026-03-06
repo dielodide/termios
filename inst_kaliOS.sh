@@ -145,9 +145,16 @@ do_install() {
 
     printf "\n${G}${MSG_CONF}${NC}\n"
     
-    # Exact AOK filesystem population steps
-    mkdir -p "$BUILD_DIR"/opt/AOK
-    rsync -ah --chown=root:root /tmp/termios-repo/FilesystemToolsmain/ "$BUILD_DIR"/opt/AOK/ >/dev/null 2>&1
+    # Exact AOK filesystem population - use cp -a to preserve full directory tree
+    mkdir -p "$BUILD_DIR"/opt
+    cp -a /tmp/termios-repo/FilesystemToolsmain "$BUILD_DIR"/opt/AOK
+    
+    # Verify critical files exist
+    if [ ! -f "$BUILD_DIR"/opt/AOK/FamDeb/etc/inittab ]; then
+        echo "ERROR: AOK files not copied correctly!"
+        ls -la "$BUILD_DIR"/opt/AOK/
+        exit 1
+    fi
     
     mkdir -p "$BUILD_DIR"/etc/opt/AOK
     echo "initializing" > "$BUILD_DIR"/etc/opt/AOK/deploy_state
@@ -252,28 +259,28 @@ EOF
 
     if [ "$LANG_SEL" = "2" ]; then
         echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "═══════════════════════════════════════════"
         echo "COMMENT UTILISER KALI LINUX SUR iSH :"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "═══════════════════════════════════════════"
         echo "1. Dans iSH, appuyez sur l'icône Paramètres ⚙️ (ou tapez 'pwd' pour voir où est le fichier)"
         echo "2. Allez dans Systèmes de fichiers -> Importer"
         echo "3. Sélectionnez le fichier '$FINAL_TAR' que vous venez de créer"
         echo "4. Attendez la fin de l'importation, puis sélectionnez-le comme système de fichiers par défaut"
         echo "5. FERMEZ ET REDÉMARREZ l'application iSH complètement."
         echo "6. Au premier démarrage, Kali se configurera automatiquement (prend ~2-3 mins)."
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "═══════════════════════════════════════════"
     else
         echo ""
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "═══════════════════════════════════════════"
         echo "HOW TO USE KALI LINUX ON iSH:"
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "═══════════════════════════════════════════"
         echo "1. In iSH, tap the Settings icon ⚙️ (or type 'pwd' to see where the file is)"
         echo "2. Go to Filesystems -> Import"
         echo "3. Select the '$FINAL_TAR' file you just created"
         echo "4. Wait for import to finish, then select it as the default filesystem"
         echo "5. CLOSE AND RESTART the iSH app completely."
         echo "6. On the first boot, Kali will configure itself automatically (takes ~2-3 mins)."
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "═══════════════════════════════════════════"
     fi
 }
 
