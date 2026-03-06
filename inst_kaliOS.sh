@@ -39,7 +39,8 @@ if [ "$LANG_SEL" = "2" ]; then
     MSG_START="Démarrage de l'installation..."
     MSG_DEP="Installation des dépendances..."
     MSG_AOK="Installation du framework AOK..."
-    MSG_DOWN="TÉLÉCHARGEMENT DE L'IMAGE KALIOS (Dropbox)..."
+    MSG_DOWN="TÉLÉCHARGEMENT DE L'IMAGE KALIOS (GitHub)..."
+    MSG_CONV="Conversion du format de compression..."
     MSG_EXTR="Extraction du Rootfs Kali..."
     MSG_SWAP="Remplacement d'Alpine par Kali (Processus AOK)..."
     MSG_DONE="Installation Terminée!"
@@ -51,7 +52,8 @@ else
     MSG_START="Starting Installation..."
     MSG_DEP="Installing Build Dependencies..."
     MSG_AOK="Installing AOK framework..."
-    MSG_DOWN="DOWNLOADING KALIOS IMAGE (Dropbox)..."
+    MSG_DOWN="DOWNLOADING KALIOS IMAGE (GitHub)..."
+    MSG_CONV="Converting compression format..."
     MSG_EXTR="Extracting Kali Rootfs..."
     MSG_SWAP="Swapping Alpine with Kali (AOK Process)..."
     MSG_DONE="Installation Complete!"
@@ -88,9 +90,10 @@ spinner() {
 }
 
 KALI_DOWNLOAD_DIR="/tmp/kali_fs"
+KALI_XZ="$KALI_DOWNLOAD_DIR/kali-rootfs.tar.xz"
 KALI_TARBALL="$KALI_DOWNLOAD_DIR/kali-rootfs.tar.gz"
 KALI_TMP_DIR="/Kali"
-DROPBOX_URL="https://www.dropbox.com/scl/fi/0y2av9eecib4ayhq6p9la/kali-nethunter-rootfs-minimal-i386.tar.gz?rlkey=87ozfa0zeyiti778cran8gjac&st=xquda7bi&dl=1"
+GITHUB_URL="https://github.com/EXALAB/Anlinux-Resources/raw/refs/heads/master/Rootfs/Kali/i386/kali-rootfs-i386.tar.xz"
 
 do_install() {
     echo ""
@@ -98,13 +101,13 @@ do_install() {
 
     printf "\n${G}${MSG_DEP}${NC}\n"
     apk update > /dev/null 2>&1
-    (apk add --no-cache ncurses wget rsync tar coreutils curl git > /dev/null 2>&1) &
+    (apk add --no-cache ncurses wget rsync tar coreutils curl git xz gzip > /dev/null 2>&1) &
     spinner $!
     
     if [ "$LANG_SEL" = "2" ]; then
-        printf "${G}✓ Dépendances installées${NC}\n"
+        printf "${G}✓ Dépendances installées (avec xz et gzip)${NC}\n"
     else
-        printf "${G}✓ Dependencies installed${NC}\n"
+        printf "${G}✓ Dependencies installed (with xz and gzip)${NC}\n"
     fi
 
     printf "\n${G}${MSG_AOK}${NC}\n"
@@ -154,23 +157,22 @@ do_install() {
     printf "\n${G}${MSG_DOWN}${NC}\n"
     mkdir -p "$KALI_DOWNLOAD_DIR"
     
-    # Download from Dropbox with direct download link (dl=1)
-    wget --progress=bar:force -O "$KALI_TARBALL" "$DROPBOX_URL" 2>&1 | \
+    # Download from GitHub
+    if [ "$LANG_SEL" = "2" ]; then
+        echo "Téléchargement depuis GitHub..."
+    else
+        echo "Downloading from GitHub..."
+    fi
+    
+    wget --progress=bar:force -O "$KALI_XZ" "$GITHUB_URL" 2>&1 | \
         grep -o '[0-9]\+%' | \
         while read percent; do
             printf "\r${G}Downloading: $percent${NC}"
         done
     echo ""
     
-    if [ ! -f "$KALI_TARBALL" ]; then
+    if [ ! -f "$KALI_XZ" ]; then
         printf "${R}ERROR: Failed to download Kali tarball!${NC}\n"
-        exit 1
-    fi
-    
-    # Verify it's actually a tarball
-    if ! file "$KALI_TARBALL" | grep -q "gzip compressed"; then
-        printf "${R}ERROR: Downloaded file is not a valid gzip tarball!${NC}\n"
-        printf "${R}File type: $(file "$KALI_TARBALL")${NC}\n"
         exit 1
     fi
     
@@ -178,6 +180,40 @@ do_install() {
         printf "${G}✓ Téléchargement terminé${NC}\n"
     else
         printf "${G}✓ Download complete${NC}\n"
+    fi
+    
+    printf "\n${G}${MSG_CONV}${NC}\n"
+    
+    # Convert tar.xz to tar.gz
+    if [ "$LANG_SEL" = "2" ]; then
+        echo "Décompression xz et recompression gzip..."
+    else
+        echo "Decompressing xz and recompressing to gzip..."
+    fi
+    
+    # Decompress xz to raw tar, then compress with gzip
+    (xz -dc "$KALI_XZ" | gzip -c > "$KALI_TARBALL") &
+    spinner $!
+    
+    if [ ! -f "$KALI_TARBALL" ]; then
+        printf "${R}ERROR: Failed to convert tarball!${NC}\n"
+        exit 1
+    fi
+    
+    # Verify it's a valid gzip tarball
+    if ! file "$KALI_TARBALL" | grep -q "gzip compressed"; then
+        printf "${R}ERROR: Converted file is not a valid gzip tarball!${NC}\n"
+        printf "${R}File type: $(file "$KALI_TARBALL")${NC}\n"
+        exit 1
+    fi
+    
+    # Clean up xz file to save space
+    rm -f "$KALI_XZ"
+    
+    if [ "$LANG_SEL" = "2" ]; then
+        printf "${G}✓ Conversion terminée${NC}\n"
+    else
+        printf "${G}✓ Conversion complete${NC}\n"
     fi
 
     printf "\n${G}${MSG_EXTR}${NC}\n"
