@@ -1,7 +1,7 @@
 #!/bin/sh
 # Kali iOS Installer - DIELODIDE
-# Builds an iSH importable Kali filesystem tarball integrating AOK Tools.
-# Doing exact Alpine -> Debian/Kali swap like AOK install_debian.sh
+# Properly integrates AOK framework to swap Alpine->Kali LIVE inside iSH
+# Must be run from within Alpine iSH as root
 
 # Colors
 R='\033[1;31m'
@@ -18,6 +18,13 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# Check we're running in iSH
+if [ ! -d /proc/ish ]; then
+    printf "${R}Error: This script must be run inside iSH app.${NC}\n"
+    printf "${R}Erreur: Ce script doit être exécuté dans l'app iSH.${NC}\n"
+    exit 1
+fi
+
 # Language selection
 printf "${C}Select Language / Choisissez la langue:${NC}\n"
 echo "1) English"
@@ -31,12 +38,10 @@ if [ "$LANG_SEL" = "2" ]; then
     MSG_OPT_2="2) Quitter l'installation"
     MSG_START="Démarrage de l'installation..."
     MSG_DEP="Installation des dépendances..."
+    MSG_AOK="Installation du framework AOK..."
     MSG_DOWN="TÉLÉCHARGEMENT DE L'IMAGE KALIOS (Google Drive)..."
-    MSG_AOK="Téléchargement et configuration Alpine/AOK initiale..."
     MSG_EXTR="Extraction du Rootfs Kali..."
     MSG_SWAP="Remplacement d'Alpine par Kali (Processus AOK)..."
-    MSG_BLD="Création de l'image finale..."
-    MSG_FIN="Nettoyage des fichiers temporaires..."
     MSG_DONE="Installation Terminée!"
     MSG_PROMPT="Choix : "
 else
@@ -45,12 +50,10 @@ else
     MSG_OPT_2="2) Quit installation"
     MSG_START="Starting Installation..."
     MSG_DEP="Installing Build Dependencies..."
+    MSG_AOK="Installing AOK framework..."
     MSG_DOWN="DOWNLOADING KALIOS IMAGE (Google Drive)..."
-    MSG_AOK="Downloading and setting up initial Alpine/AOK..."
     MSG_EXTR="Extracting Kali Rootfs..."
     MSG_SWAP="Swapping Alpine with Kali (AOK Process)..."
-    MSG_BLD="Building Final Filesystem Image..."
-    MSG_FIN="Cleaning up temporary files..."
     MSG_DONE="Installation Complete!"
     MSG_PROMPT="Choice : "
 fi
@@ -64,7 +67,7 @@ banner() {
     printf "${B}    ██║  ██╗██║  ██║███████╗██║${NC}\n"
     printf "${B}    ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝${NC}\n"
     echo " "
-    printf "${C}    Kali iOS Installer (AOK Integrated Swap)${NC}\n"
+    printf "${C}    Kali iOS Installer (AOK Framework)${NC}\n"
     printf "${Y}    DIELODIDE${NC}\n"
     echo " "
     echo "-----------------------------------------------------"
@@ -84,10 +87,9 @@ spinner() {
     printf "    \b\b\b\b"
 }
 
-BUILD_DIR="/tmp/aok_fs"
-ROOTFS_TAR="/tmp/kali-rootfs.tar.gz"
-ALPINE_TAR="/tmp/alpine-rootfs.tar.gz"
-FINAL_TAR="kalios.tar.gz"
+KALI_DOWNLOAD_DIR="/tmp/kali_fs"
+KALI_TARBALL="$KALI_DOWNLOAD_DIR/kali-rootfs.tar.gz"
+KALI_TMP_DIR="/Kali"
 FILEID="1CxbJVbR4bhXKfP81bD_yQAzA_tdqmWXZ"
 
 do_install() {
@@ -98,121 +100,162 @@ do_install() {
     apk update > /dev/null 2>&1
     (apk add --no-cache ncurses wget rsync tar coreutils curl git > /dev/null 2>&1) &
     spinner $!
+    
+    if [ "$LANG_SEL" = "2" ]; then
+        printf "${G}✓ Dépendances installées${NC}\n"
+    else
+        printf "${G}✓ Dependencies installed${NC}\n"
+    fi
 
     printf "\n${G}${MSG_AOK}${NC}\n"
-    # 1. Download Alpine minirootfs to act as the base host
-    wget -q -O "$ALPINE_TAR" "https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/x86/alpine-minirootfs-3.18.4-x86.tar.gz"
     
-    rm -rf "$BUILD_DIR"
-    mkdir -p "$BUILD_DIR"
-    tar -xf "$ALPINE_TAR" -C "$BUILD_DIR"
-    
-    # 2. Clone AOK Tools into the Alpine base
+    # Clone AOK framework and install it properly
     rm -rf /tmp/termios-repo
     (git clone -b Aok --single-branch https://github.com/dielodide/termios.git /tmp/termios-repo > /dev/null 2>&1) &
     spinner $!
     
-    mkdir -p "$BUILD_DIR"/opt
-    cp -a /tmp/termios-repo/FilesystemToolsmain "$BUILD_DIR"/opt/AOK
+    # Install AOK into /opt/AOK
+    rm -rf /opt/AOK
+    mkdir -p /opt
+    cp -a /tmp/termios-repo/FilesystemToolsmain /opt/AOK
     
-    # Fake a deploy state so AOK scripts don't complain
-    mkdir -p "$BUILD_DIR"/etc/opt/AOK
-    echo "initializing" > "$BUILD_DIR"/etc/opt/AOK/deploy_state
-    echo "3.18.4" > "$BUILD_DIR"/etc/alpine-release
+    if [ "$LANG_SEL" = "2" ]; then
+        printf "${G}✓ Framework AOK installé dans /opt/AOK${NC}\n"
+    else
+        printf "${G}✓ AOK Framework installed in /opt/AOK${NC}\n"
+    fi
+    
+    # Source the critical utils.sh to get all AOK functions
+    if [ -f /opt/AOK/tools/utils.sh ]; then
+        . /opt/AOK/tools/utils.sh
+        if [ "$LANG_SEL" = "2" ]; then
+            printf "${G}✓ Fonctions AOK chargées${NC}\n"
+        else
+            printf "${G}✓ AOK functions loaded${NC}\n"
+        fi
+    else
+        printf "${R}ERROR: /opt/AOK/tools/utils.sh not found!${NC}\n"
+        exit 1
+    fi
+    
+    # Source deb_utils for Debian family functions
+    if [ -f /opt/AOK/FamDeb/deb_utils.sh ]; then
+        . /opt/AOK/FamDeb/deb_utils.sh
+        if [ "$LANG_SEL" = "2" ]; then
+            printf "${G}✓ Utilitaires Debian chargés${NC}\n"
+        else
+            printf "${G}✓ Debian utilities loaded${NC}\n"
+        fi
+    else
+        printf "${R}ERROR: /opt/AOK/FamDeb/deb_utils.sh not found!${NC}\n"
+        exit 1
+    fi
 
     printf "\n${G}${MSG_DOWN}${NC}\n"
+    mkdir -p "$KALI_DOWNLOAD_DIR"
+    
     URL="https://docs.google.com/uc?export=download&id=${FILEID}"
     curl -L -c /tmp/cookies.txt -s "$URL" > /tmp/out.html
     CONFIRM=$(grep -Eo 'confirm=[a-zA-Z0-9_-]+' /tmp/out.html | cut -d= -f2 | head -n 1)
     if [ -n "$CONFIRM" ]; then
-        curl -L -b /tmp/cookies.txt --progress-bar -o "$ROOTFS_TAR" "https://docs.google.com/uc?export=download&confirm=${CONFIRM}&id=${FILEID}"
+        curl -L -b /tmp/cookies.txt --progress-bar -o "$KALI_TARBALL" "https://docs.google.com/uc?export=download&confirm=${CONFIRM}&id=${FILEID}"
     else
-        mv /tmp/out.html "$ROOTFS_TAR"
+        mv /tmp/out.html "$KALI_TARBALL"
     fi
     rm -f /tmp/cookies.txt /tmp/out.html
 
     printf "\n${G}${MSG_EXTR}${NC}\n"
-    distro_tmp_dir="$BUILD_DIR/Debian"
-    mkdir -p "$distro_tmp_dir"
     
-    (tar -xf "$ROOTFS_TAR" -C "$distro_tmp_dir" > /dev/null 2>&1) &
-    spinner $!
-
-    # Check for subdir mapping issue common with GDrive tars inside the extracted folder
-    SUBDIR_COUNT=$(find "$distro_tmp_dir" -maxdepth 1 -type d | wc -l)
-    if [ "$SUBDIR_COUNT" -eq 2 ]; then
-        SUBDIR=$(find "$distro_tmp_dir" -maxdepth 1 -mindepth 1 -type d)
-        if [ -d "$SUBDIR" ]; then
-            mv "$SUBDIR"/* "$distro_tmp_dir"/
-            mv "$SUBDIR"/.* "$distro_tmp_dir"/ 2>/dev/null || true
-            rmdir "$SUBDIR"
-        fi
-    fi
-
-    # Prepare missing apt config for first boot
-    mkdir -p "$distro_tmp_dir/etc/apt/apt.conf.d"
-    echo "Acquire::http::No-Cache true;" > "$distro_tmp_dir/etc/apt/apt.conf.d/99no-cache"
-    echo "Acquire::http::Pipeline-Depth 0;" >> "$distro_tmp_dir/etc/apt/apt.conf.d/99no-cache"
+    # Use AOK's create_fs function to extract properly
+    msg_1 "Extracting Kali (will show unpack time)"
+    create_fs "$KALI_TARBALL" "$KALI_TMP_DIR"
+    
+    # Clear openrc status
+    rm -rf "$KALI_TMP_DIR"/run/openrc
+    msg_3 "Extracted Kali tarball"
 
     printf "\n${G}${MSG_SWAP}${NC}\n"
-    # This block EXACTLY replicates install_debian.sh logic inside the build directory
     
-    echo "-> Clearing openrc status"
-    rm -rf "$distro_tmp_dir"/run/openrc
+    cd / || error_msg "Failed to cd into: /"
     
-    echo "-> Maintaining resolv.conf and /etc/opt"
-    cp -a "$BUILD_DIR"/etc/resolv.conf "$distro_tmp_dir"/etc/ 2>/dev/null || true
-    cp -a "$BUILD_DIR"/etc/opt "$distro_tmp_dir"/etc/
+    msg_3 "Maintaining resolv.conf"
+    cp -a /etc/resolv.conf "$KALI_TMP_DIR"/etc/
+    msg_3 "maintaining /etc/opt"
+    cp -a /etc/opt "$KALI_TMP_DIR"/etc/
     
-    echo "-> Moving Debian /etc/profile into place"
-    cp "$BUILD_DIR"/opt/AOK/Debian/etc/profile "$distro_tmp_dir"/etc/profile
+    # Use Debian profile as base (we'll customize for Kali after)
+    msg_2 "Moving Debian/Kali /etc/profile into place"
+    cp /opt/AOK/Debian/etc/profile "$KALI_TMP_DIR"/etc/profile
     
-    echo "-> Deleting most of Alpine FS"
-    find "$BUILD_DIR"/lib/ -mindepth 1 -maxdepth 1 | grep -v musl | xargs rm -rf
-    rm -rf "$BUILD_DIR"/home "$BUILD_DIR"/etc "$BUILD_DIR"/media "$BUILD_DIR"/mnt "$BUILD_DIR"/root "$BUILD_DIR"/run "$BUILD_DIR"/sbin "$BUILD_DIR"/srv "$BUILD_DIR"/usr "$BUILD_DIR"/var
+    rm -rf "$KALI_DOWNLOAD_DIR"
     
-    echo "-> Moving busybox to root"
-    cp "$BUILD_DIR"/bin/busybox "$BUILD_DIR"/
+    # EXACT swap process from install_debian.sh
+    msg_2 "Deleting most of Alpine FS"
     
-    echo "-> Deleting last parts of Alpine"
-    "$BUILD_DIR"/busybox rm -rf "$BUILD_DIR"/bin "$BUILD_DIR"/sbin
+    # Removing anything but musl from /lib
+    find /lib/ -mindepth 1 -maxdepth 1 | grep -v musl | xargs rm -rf
     
-    echo "-> Putting Debian/Kali stuff into place"
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/bin "$BUILD_DIR"/
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/sbin "$BUILD_DIR"/
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/home "$BUILD_DIR"/
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/lib64 "$BUILD_DIR"/ 2>/dev/null || true
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/libx32 "$BUILD_DIR"/ 2>/dev/null || true
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/media "$BUILD_DIR"/
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/mnt "$BUILD_DIR"/
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/root "$BUILD_DIR"/
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/run "$BUILD_DIR"/
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/srv "$BUILD_DIR"/
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/usr "$BUILD_DIR"/
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/var "$BUILD_DIR"/
-    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/etc "$BUILD_DIR"/
+    rm /home -rf
+    rm /etc -rf
+    rm /media -rf
+    rm /mnt -rf
+    rm /root -rf
+    rm /run -rf
+    rm /sbin -rf
+    rm /srv -rf
+    rm /usr -rf
+    rm /var -rf
     
-    echo "-> Copying Alpine lib (musl) to /usr/lib"
-    "$BUILD_DIR"/busybox cp "$BUILD_DIR"/lib/* "$BUILD_DIR"/usr/lib/
+    msg_3 "Moving busybox to root"
+    # will be deleted after Kali is in place
+    cp /bin/busybox /
     
-    echo "-> Replacing /lib with a soft-link to /usr/lib"
-    rm -rf "$BUILD_DIR"/lib
-    ln -s usr/lib "$BUILD_DIR"/lib
+    msg_3 "Deleting last parts of Alpine"
+    /busybox rm /bin -rf
+    /busybox rm /sbin -rf
     
-    echo "-> Removing tmp area /Debian"
-    rm -rf "$distro_tmp_dir"
+    msg_3 "Putting Kali stuff into place"
+    /busybox mv "$KALI_TMP_DIR"/bin /
+    /busybox mv "$KALI_TMP_DIR"/sbin /
+    /busybox mv "$KALI_TMP_DIR"/home /
+    /busybox mv "$KALI_TMP_DIR"/lib64 / 2>/dev/null || true
+    /busybox mv "$KALI_TMP_DIR"/libx32 / 2>/dev/null || true
+    /busybox mv "$KALI_TMP_DIR"/media /
+    /busybox mv "$KALI_TMP_DIR"/mnt /
+    /busybox mv "$KALI_TMP_DIR"/root /
+    /busybox mv "$KALI_TMP_DIR"/run /
+    /busybox mv "$KALI_TMP_DIR"/srv /
+    /busybox mv "$KALI_TMP_DIR"/usr /
+    /busybox mv "$KALI_TMP_DIR"/var /
+    /busybox mv "$KALI_TMP_DIR"/etc /
     
-    echo "-> Removing last traces of Alpine - busybox"
-    rm -f "$BUILD_DIR"/busybox
-    rm -f "$BUILD_DIR"/usr/lib/libc.musl*
-    rm -f "$BUILD_DIR"/usr/lib/ld-musl*
+    msg_3 "Copying Alpine lib (musl) to /usr/lib"
+    /busybox cp /lib/* /usr/lib/
     
-    # Do exactly what initial_fs_prep_fam_deb() does in deb_utils.sh:
-    echo "-> Setting up AOK inittab"
-    cp -a "$BUILD_DIR"/opt/AOK/FamDeb/etc/inittab "$BUILD_DIR"/etc/inittab
+    msg_3 "Replacing /lib with a soft-link to /usr/lib"
+    /opt/AOK/choose_distro/bin/lib_fix
     
-    # INJECT APT FIX FOR FIRST BOOT SINCE IT IS KALI
-    cat > "$BUILD_DIR"/root/first_boot_setup.sh << 'EOF'
+    # From now on Kali should be fully available
+    rm -f "$f_destfs_select_hint"
+    
+    msg_3 "Removing tmp area $KALI_TMP_DIR"
+    rm "$KALI_TMP_DIR" -rf || error_msg "Failed to clear: $KALI_TMP_DIR"
+    
+    msg_2 "Removing last traces of Alpine - busybox"
+    rm /busybox
+    rm /usr/lib/libc.musl*
+    rm /usr/lib/ld-musl*
+    
+    # Call initial_fs_prep_fam_deb which installs fix_dev and sets up inittab
+    initial_fs_prep_fam_deb
+    
+    msg_2 "Set openrc to runlevel default"
+    /usr/sbin/openrc default
+    
+    # Create custom Kali first boot script
+    msg_2 "Setting up Kali first boot configuration"
+    
+    cat > /root/kali_first_boot.sh << 'EOF'
 #!/bin/sh
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export DEBIAN_FRONTEND=noninteractive
@@ -221,9 +264,16 @@ echo "========================================"
 echo " KaliOS AOK First Boot Configuration... "
 echo "========================================"
 
+# Fix APT for Kali
+echo "nameserver 1.1.1.1" > /etc/resolv.conf
+echo "nameserver 8.8.8.8" >> /etc/resolv.conf
+
 groupadd -g 3000 _apt 2>/dev/null || true
 useradd -u 3000 -g 3000 -s /usr/sbin/nologin -d /nonexistent _apt 2>/dev/null || true
 chmod 777 /tmp /var/tmp
+mkdir -p /etc/apt/apt.conf.d
+echo "Acquire::http::No-Cache true;" > /etc/apt/apt.conf.d/99no-cache
+echo "Acquire::http::Pipeline-Depth 0;" >> /etc/apt/apt.conf.d/99no-cache
 chmod +x /usr/lib/apt/methods/* 2>/dev/null || true
 
 apt-get update -y || apt-get update -y --allow-insecure-repositories
@@ -236,67 +286,55 @@ update-locale LANG=en_US.UTF-8
 export USER_NAME="root"
 export USER_SHELL="/bin/bash"
 
-# RUN AOK SCRIPTS just like select_distro -> install_debian -> setup_debian
+# Run AOK common setup
 /bin/sh /opt/AOK/common_AOK/setup_common_env.sh
-/bin/sh /opt/AOK/Debian/setup_debian.sh
+/bin/sh /opt/AOK/FamDeb/setup_famdeb.sh
 
-# Remove hook
-sed -i '/first_boot_setup.sh/d' /etc/profile
-rm -f /root/first_boot_setup.sh
+# Cleanup this hook
+sed -i '/kali_first_boot.sh/d' /etc/profile
+rm -f /root/kali_first_boot.sh
 
 echo "========================================"
 echo " Configuration Complete! Welcome to Kali "
 echo "========================================"
-echo "Please completely close and restart the iSH app now."
 EOF
-    chmod +x "$BUILD_DIR"/root/first_boot_setup.sh
     
-    cat >> "$BUILD_DIR"/etc/profile << 'EOF'
-
-if [ -f /root/first_boot_setup.sh ]; then
-    /bin/sh /root/first_boot_setup.sh
-fi
-EOF
-
-    printf "\n${G}${MSG_BLD}${NC}\n"
-    cd "$BUILD_DIR"
-    (tar -czf "/tmp/$FINAL_TAR" . > /dev/null 2>&1) &
-    spinner $!
+    chmod +x /root/kali_first_boot.sh
     
-    cd /root
-    mv "/tmp/$FINAL_TAR" "./$FINAL_TAR" 2>/dev/null || true
-
-    printf "\n${G}${MSG_FIN}${NC}\n"
-    rm -rf "$BUILD_DIR"
-    rm -f "$ALPINE_TAR" "$ROOTFS_TAR"
-    rm -rf /tmp/termios-repo
+    # Hook it into profile
+    echo "" >> /etc/profile
+    echo "if [ -f /root/kali_first_boot.sh ]; then" >> /etc/profile
+    echo "    /bin/sh /root/kali_first_boot.sh" >> /etc/profile
+    echo "fi" >> /etc/profile
     
     printf "\n${G}${MSG_DONE}${NC}\n"
 
     if [ "$LANG_SEL" = "2" ]; then
         echo ""
-        echo "═══════════════════════════════════════════"
-        echo "COMMENT UTILISER KALI LINUX SUR iSH :"
-        echo "═══════════════════════════════════════════"
-        echo "1. Dans iSH, appuyez sur l'icône Paramètres ⚙️ (ou tapez 'pwd' pour voir où est le fichier)"
-        echo "2. Allez dans Systèmes de fichiers -> Importer"
-        echo "3. Sélectionnez le fichier '$FINAL_TAR' que vous venez de créer"
-        echo "4. Attendez la fin de l'importation, puis sélectionnez-le comme système de fichiers par défaut"
-        echo "5. FERMEZ ET REDÉMARREZ l'application iSH complètement."
-        echo "6. Au premier démarrage, Kali se configurera automatiquement (prend ~2-3 mins)."
-        echo "═══════════════════════════════════════════"
+        echo "══════════════════════════════════════════════════════════"
+        echo "INSTALLATION TERMINÉE!"
+        echo "══════════════════════════════════════════════════════════"
+        echo "Kali Linux a été installé avec le framework AOK."
+        echo ""
+        echo "PROCHAINES ÉTAPES:"
+        echo "1. FERMEZ COMPLÈTEMENT l'application iSH"
+        echo "2. Redémarrez iSH"
+        echo "3. Au premier démarrage, la configuration automatique prendra ~2-3 minutes"
+        echo "4. Après, vous aurez Kali Linux opérationnel avec tous les outils AOK!"
+        echo "══════════════════════════════════════════════════════════"
     else
         echo ""
-        echo "═══════════════════════════════════════════"
-        echo "HOW TO USE KALI LINUX ON iSH:"
-        echo "═══════════════════════════════════════════"
-        echo "1. In iSH, tap the Settings icon ⚙️ (or type 'pwd' to see where the file is)"
-        echo "2. Go to Filesystems -> Import"
-        echo "3. Select the '$FINAL_TAR' file you just created"
-        echo "4. Wait for import to finish, then select it as the default filesystem"
-        echo "5. CLOSE AND RESTART the iSH app completely."
-        echo "6. On the first boot, Kali will configure itself automatically (takes ~2-3 mins)."
-        echo "═══════════════════════════════════════════"
+        echo "══════════════════════════════════════════════════════════"
+        echo "INSTALLATION COMPLETE!"
+        echo "══════════════════════════════════════════════════════════"
+        echo "Kali Linux has been installed with AOK framework."
+        echo ""
+        echo "NEXT STEPS:"
+        echo "1. COMPLETELY CLOSE the iSH application"
+        echo "2. Restart iSH"
+        echo "3. On first boot, automatic configuration will take ~2-3 minutes"
+        echo "4. After that, you'll have operational Kali Linux with all AOK tools!"
+        echo "══════════════════════════════════════════════════════════"
     fi
 }
 
@@ -304,7 +342,7 @@ EOF
 cd /root
 banner
 
-# Menu in Terminal Green
+# Menu
 printf "${G}"
 echo "$MSG_MENU_TITLE"
 echo ""
