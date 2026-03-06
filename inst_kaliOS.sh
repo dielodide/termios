@@ -157,19 +157,14 @@ do_install() {
     printf "\n${G}${MSG_DOWN}${NC}\n"
     mkdir -p "$KALI_DOWNLOAD_DIR"
     
-    # Download from GitHub
+    # Download from GitHub - simple progress bar
     if [ "$LANG_SEL" = "2" ]; then
-        echo "Téléchargement depuis GitHub..."
+        echo "Téléchargement depuis GitHub (ceci prendra quelques minutes)..."
     else
-        echo "Downloading from GitHub..."
+        echo "Downloading from GitHub (this will take a few minutes)..."
     fi
     
-    wget --progress=bar:force -O "$KALI_XZ" "$GITHUB_URL" 2>&1 | \
-        grep -o '[0-9]\+%' | \
-        while read percent; do
-            printf "\r${G}Downloading: $percent${NC}"
-        done
-    echo ""
+    wget --progress=bar:force -O "$KALI_XZ" "$GITHUB_URL" 2>&1
     
     if [ ! -f "$KALI_XZ" ]; then
         printf "${R}ERROR: Failed to download Kali tarball!${NC}\n"
