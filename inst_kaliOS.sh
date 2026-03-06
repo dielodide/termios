@@ -1,6 +1,7 @@
 #!/bin/sh
 # Kali iOS Installer - DIELODIDE
 # Builds an iSH importable Kali filesystem tarball integrating AOK Tools.
+# Using AOK-style filesystem build flow
 
 # Colors
 R='\033[1;31m'
@@ -83,8 +84,8 @@ spinner() {
     printf "    \b\b\b\b"
 }
 
-BUILD_DIR="/opt/kalios-build"
-ROOTFS_TAR="/tmp/kali-rootfs.tar.gz"
+BUILD_DIR="/tmp/aok_fs"
+ROOTFS_TAR="/tmp/aok_cache/kali-rootfs.tar.gz"
 FINAL_TAR="kalios.tar.gz"
 FILEID="1CxbJVbR4bhXKfP81bD_yQAzA_tdqmWXZ"
 
@@ -106,6 +107,7 @@ do_install() {
     done
 
     printf "\n${G}${MSG_DOWN}${NC}\n"
+    mkdir -p /tmp/aok_cache
     URL="https://docs.google.com/uc?export=download&id=${FILEID}"
     curl -L -c /tmp/cookies.txt -s "$URL" > /tmp/out.html
     CONFIRM=$(grep -Eo 'confirm=[a-zA-Z0-9_-]+' /tmp/out.html | cut -d= -f2 | head -n 1)
@@ -124,63 +126,60 @@ do_install() {
     printf "\n${G}${MSG_EXTR}${NC}\n"
     rm -rf "$BUILD_DIR"
     mkdir -p "$BUILD_DIR"
-    (tar -xzf "$ROOTFS_TAR" -C "$BUILD_DIR" > /dev/null 2>&1) &
+    
+    # Using specific AOK untar method - preserving exact filesystem mapping
+    cd "$BUILD_DIR"
+    (tar -xf "$ROOTFS_TAR" > /dev/null 2>&1) &
     spinner $!
 
-    # Check if extraction created a subdirectory instead of extracting to root
-    SUBDIR_COUNT=$(find "$BUILD_DIR" -maxdepth 1 -type d | wc -l)
+    # Check for subdir mapping issue common with GDrive tars
+    SUBDIR_COUNT=$(find . -maxdepth 1 -type d | wc -l)
     if [ "$SUBDIR_COUNT" -eq 2 ]; then
-        # Only one subdirectory exists, move its contents up
-        SUBDIR=$(find "$BUILD_DIR" -maxdepth 1 -mindepth 1 -type d)
+        SUBDIR=$(find . -maxdepth 1 -mindepth 1 -type d)
         if [ -d "$SUBDIR" ]; then
-            mv "$SUBDIR"/* "$BUILD_DIR"/
-            mv "$SUBDIR"/.* "$BUILD_DIR"/ 2>/dev/null || true
+            mv "$SUBDIR"/* .
+            mv "$SUBDIR"/.* . 2>/dev/null || true
             rmdir "$SUBDIR"
         fi
     fi
 
     printf "\n${G}${MSG_CONF}${NC}\n"
     
-    # Create essential directories if they don't exist
-    mkdir -p "$BUILD_DIR/root"
-    mkdir -p "$BUILD_DIR/etc"
-    mkdir -p "$BUILD_DIR/dev"
-    mkdir -p "$BUILD_DIR/proc"
-    mkdir -p "$BUILD_DIR/sys"
-    mkdir -p "$BUILD_DIR/iCloud"
-    mkdir -p "$BUILD_DIR/run"
-    mkdir -p "$BUILD_DIR/tmp"
-    mkdir -p "$BUILD_DIR/var/tmp"
-    mkdir -p "$BUILD_DIR/usr/bin"
-    mkdir -p "$BUILD_DIR/usr/sbin"
+    # Exact AOK filesystem population steps
+    mkdir -p "$BUILD_DIR"/opt/AOK
+    rsync -ah --chown=root:root /tmp/termios-repo/FilesystemToolsmain/ "$BUILD_DIR"/opt/AOK/ >/dev/null 2>&1
+    
+    mkdir -p "$BUILD_DIR"/etc/opt/AOK
+    echo "initializing" > "$BUILD_DIR"/etc/opt/AOK/deploy_state
+    
+    # Create required base mount points for iSH/Linux if they're missing
+    mkdir -p "$BUILD_DIR"/dev
+    mkdir -p "$BUILD_DIR"/proc
+    mkdir -p "$BUILD_DIR"/sys
+    mkdir -p "$BUILD_DIR"/iCloud
+    mkdir -p "$BUILD_DIR"/run
+    mkdir -p "$BUILD_DIR"/tmp
+    
+    # Replace initial inittab (like AOK initial_fs_prep_fam_deb)
+    cp -a "$BUILD_DIR"/opt/AOK/FamDeb/etc/inittab "$BUILD_DIR"/etc/inittab
 
-    # Copy AOK Tools
-    mkdir -p "$BUILD_DIR/opt/AOK"
-    cp -a /tmp/termios-repo/FilesystemToolsmain/* "$BUILD_DIR/opt/AOK/"
-    chmod +x "$BUILD_DIR"/opt/AOK/common_AOK/*.sh 2>/dev/null || true
-    chmod +x "$BUILD_DIR"/opt/AOK/Debian/*.sh 2>/dev/null || true
-    chmod +x "$BUILD_DIR"/opt/AOK/tools/* 2>/dev/null || true
-
-    if [ "$LANG_SEL" = "2" ]; then
-        printf "${G}✓ Préparation des points de montage et intégration AOK${NC}\n"
-    else
-        printf "${G}✓ Preparing mount points and AOK integration${NC}\n"
-    fi
-
-    cat > "$BUILD_DIR/root/first_boot_setup.sh" << 'EOF'
-#!/bin/sh
+    # Create setup profile script similar to AOK's set_new_etc_profile
+    rm -f "$BUILD_DIR"/etc/profile
+    cat > "$BUILD_DIR"/etc/profile << 'EOF'
+#
+# Script that is part of deploy, wrap it inside other script
+# so that any error exits dont exit ish, just aborts deploy
+#
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export DEBIAN_FRONTEND=noninteractive
 
+# --- KALI APT FIX ---
 echo "========================================"
-echo "  KaliOS AOK First Boot Configuration... "
+echo " KaliOS AOK First Boot Configuration... "
 echo "========================================"
 
-# Fix DNS
 echo "nameserver 1.1.1.1" > /etc/resolv.conf
 echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 
-# Fix APT in iSH
 groupadd -g 3000 _apt 2>/dev/null || true
 useradd -u 3000 -g 3000 -s /usr/sbin/nologin -d /nonexistent _apt 2>/dev/null || true
 chmod 777 /tmp /var/tmp
@@ -189,79 +188,54 @@ echo "Acquire::http::No-Cache true;" > /etc/apt/apt.conf.d/99no-cache
 echo "Acquire::http::Pipeline-Depth 0;" >> /etc/apt/apt.conf.d/99no-cache
 chmod +x /usr/lib/apt/methods/* 2>/dev/null || true
 
-echo "Updating APT..."
 apt-get update -y || apt-get update -y --allow-insecure-repositories
+apt-get install -y locales sudo dialog curl tzdata openrc cron dcron ncurses-term inetutils-ping bash rsync
 
-echo "Installing missing packages..."
-apt-get install -y locales sudo dialog curl tzdata openrc cron dcron ncurses-term inetutils-ping bash
-
-# Configure Locales
 echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 locale-gen en_US.UTF-8
 update-locale LANG=en_US.UTF-8
 
-# Apply AOK Tools configurations
-if [ -d "/opt/AOK" ]; then
-    echo "Applying AOK Tools Configuration..."
-    
-    # We need to ensure basic env vars for AOK
-    export USER_NAME="root"
-    mkdir -p /var/run/AOK
-    
-    # Setup inittab manually as AOK does before chroot
-    if [ -f /opt/AOK/FamDeb/etc/inittab ]; then
-        cp -a /opt/AOK/FamDeb/etc/inittab /etc/inittab
+# Ensure we have the base files needed for AOK
+export USER_NAME="root"
+export USER_SHELL="/bin/bash"
+
+# --- RUN AOK SCRIPTS ---
+/bin/sh /opt/AOK/common_AOK/setup_common_env.sh
+/bin/sh /opt/AOK/Debian/setup_debian.sh
+
+# Cleanup the profile hook so it runs standard profile after this
+cat > /etc/profile << 'INNER_EOF'
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+if [ -d /etc/profile.d ]; then
+  for i in /etc/profile.d/*.sh; do
+    if [ -r $i ]; then
+      . $i
     fi
-    
-    # Run AOK Scripts directly inside the system
-    if [ -f /opt/AOK/common_AOK/setup_common_env.sh ]; then
-        /bin/sh /opt/AOK/common_AOK/setup_common_env.sh
-    fi
-    if [ -f /opt/AOK/Debian/setup_debian.sh ]; then
-        /bin/sh /opt/AOK/Debian/setup_debian.sh
-    fi
+  done
+  unset i
 fi
+export PS1='\u@\h:\w\$ '
+INNER_EOF
 
 echo "========================================"
 echo " Configuration Complete! Welcome to Kali "
 echo "========================================"
-
-# Cleanup hook
-sed -i '/first_boot_setup.sh/d' /etc/profile
-rm -f /root/first_boot_setup.sh
-
-echo "Please completely close and restart the iSH app now."
 EOF
-    chmod +x "$BUILD_DIR/root/first_boot_setup.sh"
-    
-    if [ "$LANG_SEL" = "2" ]; then
-        printf "${G}✓ Injection du script de premier démarrage${NC}\n"
-    else
-        printf "${G}✓ Injecting first-boot setup script${NC}\n"
-    fi
-
-    # Ensure /etc/profile exists
-    if [ ! -f "$BUILD_DIR/etc/profile" ]; then
-        touch "$BUILD_DIR/etc/profile"
-    fi
-
-    cat >> "$BUILD_DIR/etc/profile" << 'EOF'
-
-if [ -f /root/first_boot_setup.sh ]; then
-    /bin/sh /root/first_boot_setup.sh
-fi
-EOF
+    chmod 744 "$BUILD_DIR"/etc/profile
 
     if [ "$LANG_SEL" = "2" ]; then
-        printf "${G}✓ Configuration des hooks /etc/profile${NC}\n"
+        printf "${G}✓ Préparation des points de montage et intégration AOK${NC}\n"
     else
-        printf "${G}✓ Configuring /etc/profile hooks${NC}\n"
+        printf "${G}✓ Preparing mount points and AOK integration${NC}\n"
     fi
 
     printf "\n${G}${MSG_BLD}${NC}\n"
-    (cd "$BUILD_DIR" && tar -czf "/$FINAL_TAR" . > /dev/null 2>&1) &
+    cd "$BUILD_DIR"
+    (tar -czf "/tmp/$FINAL_TAR" . > /dev/null 2>&1) &
     spinner $!
-    mv "/$FINAL_TAR" "./$FINAL_TAR" 2>/dev/null || true
+    
+    cd /root
+    mv "/tmp/$FINAL_TAR" "./$FINAL_TAR" 2>/dev/null || true
     
     if [ "$LANG_SEL" = "2" ]; then
         printf "${G}✓ Image compressée créée avec succès: $FINAL_TAR${NC}\n"
@@ -271,7 +245,7 @@ EOF
 
     printf "\n${G}${MSG_FIN}${NC}\n"
     rm -rf "$BUILD_DIR"
-    rm -f "$ROOTFS_TAR"
+    rm -rf /tmp/aok_cache
     rm -rf /tmp/termios-repo
     
     printf "\n${G}${MSG_DONE}${NC}\n"
@@ -287,7 +261,6 @@ EOF
         echo "4. Attendez la fin de l'importation, puis sélectionnez-le comme système de fichiers par défaut"
         echo "5. FERMEZ ET REDÉMARREZ l'application iSH complètement."
         echo "6. Au premier démarrage, Kali se configurera automatiquement (prend ~2-3 mins)."
-        echo "   Le script corrigera les méthodes APT, installera les dépendances (sudo, locales) et exécutera les scripts AOK."
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     else
         echo ""
@@ -300,12 +273,12 @@ EOF
         echo "4. Wait for import to finish, then select it as the default filesystem"
         echo "5. CLOSE AND RESTART the iSH app completely."
         echo "6. On the first boot, Kali will configure itself automatically (takes ~2-3 mins)."
-        echo "   The script will fix APT methods, install dependencies, and run AOK scripts."
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     fi
 }
 
 # Main execution
+cd /root
 banner
 
 # Menu in Terminal Green
