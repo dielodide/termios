@@ -1,7 +1,7 @@
 #!/bin/sh
 # Kali iOS Installer - DIELODIDE
 # Builds an iSH importable Kali filesystem tarball integrating AOK Tools.
-# Using AOK-style filesystem build flow
+# Doing exact Alpine -> Debian/Kali swap like AOK install_debian.sh
 
 # Colors
 R='\033[1;31m'
@@ -26,29 +26,29 @@ printf "> "
 read LANG_SEL
 
 if [ "$LANG_SEL" = "2" ]; then
-    MSG_MENU_TITLE="TÉLÉCHARGEMENT ET CONFIGURATION SMART KALIOS (AOK):"
+    MSG_MENU_TITLE="TÉLÉCHARGEMENT ET CONFIGURATION SMART KALIOS (AOK Swap):"
     MSG_OPT_1="1) Installer KaliOS"
     MSG_OPT_2="2) Quitter l'installation"
     MSG_START="Démarrage de l'installation..."
     MSG_DEP="Installation des dépendances..."
     MSG_DOWN="TÉLÉCHARGEMENT DE L'IMAGE KALIOS (Google Drive)..."
-    MSG_AOK="Téléchargement des outils AOK..."
-    MSG_EXTR="Extraction du Rootfs..."
-    MSG_CONF="Configuration de la compatibilité iSH..."
+    MSG_AOK="Téléchargement et configuration Alpine/AOK initiale..."
+    MSG_EXTR="Extraction du Rootfs Kali..."
+    MSG_SWAP="Remplacement d'Alpine par Kali (Processus AOK)..."
     MSG_BLD="Création de l'image finale..."
     MSG_FIN="Nettoyage des fichiers temporaires..."
     MSG_DONE="Installation Terminée!"
     MSG_PROMPT="Choix : "
 else
-    MSG_MENU_TITLE="SMART KALIOS DOWNLOAD AND SETUP (AOK):"
+    MSG_MENU_TITLE="SMART KALIOS DOWNLOAD AND SETUP (AOK Swap):"
     MSG_OPT_1="1) Install KaliOS"
     MSG_OPT_2="2) Quit installation"
     MSG_START="Starting Installation..."
     MSG_DEP="Installing Build Dependencies..."
     MSG_DOWN="DOWNLOADING KALIOS IMAGE (Google Drive)..."
-    MSG_AOK="Downloading AOK tools..."
-    MSG_EXTR="Extracting Rootfs..."
-    MSG_CONF="Configuring iSH Compatibility..."
+    MSG_AOK="Downloading and setting up initial Alpine/AOK..."
+    MSG_EXTR="Extracting Kali Rootfs..."
+    MSG_SWAP="Swapping Alpine with Kali (AOK Process)..."
     MSG_BLD="Building Final Filesystem Image..."
     MSG_FIN="Cleaning up temporary files..."
     MSG_DONE="Installation Complete!"
@@ -64,7 +64,7 @@ banner() {
     printf "${B}    ██║  ██╗██║  ██║███████╗██║${NC}\n"
     printf "${B}    ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═╝${NC}\n"
     echo " "
-    printf "${C}    Kali iOS Installer (AOK Integrated)${NC}\n"
+    printf "${C}    Kali iOS Installer (AOK Integrated Swap)${NC}\n"
     printf "${Y}    DIELODIDE${NC}\n"
     echo " "
     echo "-----------------------------------------------------"
@@ -85,7 +85,8 @@ spinner() {
 }
 
 BUILD_DIR="/tmp/aok_fs"
-ROOTFS_TAR="/tmp/aok_cache/kali-rootfs.tar.gz"
+ROOTFS_TAR="/tmp/kali-rootfs.tar.gz"
+ALPINE_TAR="/tmp/alpine-rootfs.tar.gz"
 FINAL_TAR="kalios.tar.gz"
 FILEID="1CxbJVbR4bhXKfP81bD_yQAzA_tdqmWXZ"
 
@@ -97,17 +98,29 @@ do_install() {
     apk update > /dev/null 2>&1
     (apk add --no-cache ncurses wget rsync tar coreutils curl git > /dev/null 2>&1) &
     spinner $!
+
+    printf "\n${G}${MSG_AOK}${NC}\n"
+    # 1. Download Alpine minirootfs to act as the base host
+    wget -q -O "$ALPINE_TAR" "https://dl-cdn.alpinelinux.org/alpine/v3.18/releases/x86/alpine-minirootfs-3.18.4-x86.tar.gz"
     
-    for pkg in ncurses wget rsync tar coreutils curl git; do
-        if [ "$LANG_SEL" = "2" ]; then
-            printf "${G}✓ $pkg installé${NC}\n"
-        else
-            printf "${G}✓ $pkg installed${NC}\n"
-        fi
-    done
+    rm -rf "$BUILD_DIR"
+    mkdir -p "$BUILD_DIR"
+    tar -xf "$ALPINE_TAR" -C "$BUILD_DIR"
+    
+    # 2. Clone AOK Tools into the Alpine base
+    rm -rf /tmp/termios-repo
+    (git clone -b Aok --single-branch https://github.com/dielodide/termios.git /tmp/termios-repo > /dev/null 2>&1) &
+    spinner $!
+    
+    mkdir -p "$BUILD_DIR"/opt
+    cp -a /tmp/termios-repo/FilesystemToolsmain "$BUILD_DIR"/opt/AOK
+    
+    # Fake a deploy state so AOK scripts don't complain
+    mkdir -p "$BUILD_DIR"/etc/opt/AOK
+    echo "initializing" > "$BUILD_DIR"/etc/opt/AOK/deploy_state
+    echo "3.18.4" > "$BUILD_DIR"/etc/alpine-release
 
     printf "\n${G}${MSG_DOWN}${NC}\n"
-    mkdir -p /tmp/aok_cache
     URL="https://docs.google.com/uc?export=download&id=${FILEID}"
     curl -L -c /tmp/cookies.txt -s "$URL" > /tmp/out.html
     CONFIRM=$(grep -Eo 'confirm=[a-zA-Z0-9_-]+' /tmp/out.html | cut -d= -f2 | head -n 1)
@@ -118,81 +131,99 @@ do_install() {
     fi
     rm -f /tmp/cookies.txt /tmp/out.html
 
-    printf "\n${G}${MSG_AOK}${NC}\n"
-    rm -rf /tmp/termios-repo
-    (git clone -b Aok --single-branch https://github.com/dielodide/termios.git /tmp/termios-repo > /dev/null 2>&1) &
-    spinner $!
-
     printf "\n${G}${MSG_EXTR}${NC}\n"
-    rm -rf "$BUILD_DIR"
-    mkdir -p "$BUILD_DIR"
+    distro_tmp_dir="$BUILD_DIR/Debian"
+    mkdir -p "$distro_tmp_dir"
     
-    # Using specific AOK untar method - preserving exact filesystem mapping
-    cd "$BUILD_DIR"
-    (tar -xf "$ROOTFS_TAR" > /dev/null 2>&1) &
+    (tar -xf "$ROOTFS_TAR" -C "$distro_tmp_dir" > /dev/null 2>&1) &
     spinner $!
 
-    # Check for subdir mapping issue common with GDrive tars
-    SUBDIR_COUNT=$(find . -maxdepth 1 -type d | wc -l)
+    # Check for subdir mapping issue common with GDrive tars inside the extracted folder
+    SUBDIR_COUNT=$(find "$distro_tmp_dir" -maxdepth 1 -type d | wc -l)
     if [ "$SUBDIR_COUNT" -eq 2 ]; then
-        SUBDIR=$(find . -maxdepth 1 -mindepth 1 -type d)
+        SUBDIR=$(find "$distro_tmp_dir" -maxdepth 1 -mindepth 1 -type d)
         if [ -d "$SUBDIR" ]; then
-            mv "$SUBDIR"/* .
-            mv "$SUBDIR"/.* . 2>/dev/null || true
+            mv "$SUBDIR"/* "$distro_tmp_dir"/
+            mv "$SUBDIR"/.* "$distro_tmp_dir"/ 2>/dev/null || true
             rmdir "$SUBDIR"
         fi
     fi
 
-    printf "\n${G}${MSG_CONF}${NC}\n"
+    # Prepare missing apt config for first boot
+    mkdir -p "$distro_tmp_dir/etc/apt/apt.conf.d"
+    echo "Acquire::http::No-Cache true;" > "$distro_tmp_dir/etc/apt/apt.conf.d/99no-cache"
+    echo "Acquire::http::Pipeline-Depth 0;" >> "$distro_tmp_dir/etc/apt/apt.conf.d/99no-cache"
+
+    printf "\n${G}${MSG_SWAP}${NC}\n"
+    # This block EXACTLY replicates install_debian.sh logic inside the build directory
     
-    # Exact AOK filesystem population - use cp -a to preserve full directory tree
-    mkdir -p "$BUILD_DIR"/opt
-    cp -a /tmp/termios-repo/FilesystemToolsmain "$BUILD_DIR"/opt/AOK
+    echo "-> Clearing openrc status"
+    rm -rf "$distro_tmp_dir"/run/openrc
     
-    # Verify critical files exist
-    if [ ! -f "$BUILD_DIR"/opt/AOK/FamDeb/etc/inittab ]; then
-        echo "ERROR: AOK files not copied correctly!"
-        ls -la "$BUILD_DIR"/opt/AOK/
-        exit 1
-    fi
+    echo "-> Maintaining resolv.conf and /etc/opt"
+    cp -a "$BUILD_DIR"/etc/resolv.conf "$distro_tmp_dir"/etc/ 2>/dev/null || true
+    cp -a "$BUILD_DIR"/etc/opt "$distro_tmp_dir"/etc/
     
-    mkdir -p "$BUILD_DIR"/etc/opt/AOK
-    echo "initializing" > "$BUILD_DIR"/etc/opt/AOK/deploy_state
+    echo "-> Moving Debian /etc/profile into place"
+    cp "$BUILD_DIR"/opt/AOK/Debian/etc/profile "$distro_tmp_dir"/etc/profile
     
-    # Create required base mount points for iSH/Linux if they're missing
-    mkdir -p "$BUILD_DIR"/dev
-    mkdir -p "$BUILD_DIR"/proc
-    mkdir -p "$BUILD_DIR"/sys
-    mkdir -p "$BUILD_DIR"/iCloud
-    mkdir -p "$BUILD_DIR"/run
-    mkdir -p "$BUILD_DIR"/tmp
+    echo "-> Deleting most of Alpine FS"
+    find "$BUILD_DIR"/lib/ -mindepth 1 -maxdepth 1 | grep -v musl | xargs rm -rf
+    rm -rf "$BUILD_DIR"/home "$BUILD_DIR"/etc "$BUILD_DIR"/media "$BUILD_DIR"/mnt "$BUILD_DIR"/root "$BUILD_DIR"/run "$BUILD_DIR"/sbin "$BUILD_DIR"/srv "$BUILD_DIR"/usr "$BUILD_DIR"/var
     
-    # Replace initial inittab (like AOK initial_fs_prep_fam_deb)
+    echo "-> Moving busybox to root"
+    cp "$BUILD_DIR"/bin/busybox "$BUILD_DIR"/
+    
+    echo "-> Deleting last parts of Alpine"
+    "$BUILD_DIR"/busybox rm -rf "$BUILD_DIR"/bin "$BUILD_DIR"/sbin
+    
+    echo "-> Putting Debian/Kali stuff into place"
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/bin "$BUILD_DIR"/
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/sbin "$BUILD_DIR"/
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/home "$BUILD_DIR"/
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/lib64 "$BUILD_DIR"/ 2>/dev/null || true
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/libx32 "$BUILD_DIR"/ 2>/dev/null || true
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/media "$BUILD_DIR"/
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/mnt "$BUILD_DIR"/
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/root "$BUILD_DIR"/
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/run "$BUILD_DIR"/
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/srv "$BUILD_DIR"/
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/usr "$BUILD_DIR"/
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/var "$BUILD_DIR"/
+    "$BUILD_DIR"/busybox mv "$distro_tmp_dir"/etc "$BUILD_DIR"/
+    
+    echo "-> Copying Alpine lib (musl) to /usr/lib"
+    "$BUILD_DIR"/busybox cp "$BUILD_DIR"/lib/* "$BUILD_DIR"/usr/lib/
+    
+    echo "-> Replacing /lib with a soft-link to /usr/lib"
+    rm -rf "$BUILD_DIR"/lib
+    ln -s usr/lib "$BUILD_DIR"/lib
+    
+    echo "-> Removing tmp area /Debian"
+    rm -rf "$distro_tmp_dir"
+    
+    echo "-> Removing last traces of Alpine - busybox"
+    rm -f "$BUILD_DIR"/busybox
+    rm -f "$BUILD_DIR"/usr/lib/libc.musl*
+    rm -f "$BUILD_DIR"/usr/lib/ld-musl*
+    
+    # Do exactly what initial_fs_prep_fam_deb() does in deb_utils.sh:
+    echo "-> Setting up AOK inittab"
     cp -a "$BUILD_DIR"/opt/AOK/FamDeb/etc/inittab "$BUILD_DIR"/etc/inittab
-
-    # Create setup profile script similar to AOK's set_new_etc_profile
-    rm -f "$BUILD_DIR"/etc/profile
-    cat > "$BUILD_DIR"/etc/profile << 'EOF'
-#
-# Script that is part of deploy, wrap it inside other script
-# so that any error exits dont exit ish, just aborts deploy
-#
+    
+    # INJECT APT FIX FOR FIRST BOOT SINCE IT IS KALI
+    cat > "$BUILD_DIR"/root/first_boot_setup.sh << 'EOF'
+#!/bin/sh
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export DEBIAN_FRONTEND=noninteractive
 
-# --- KALI APT FIX ---
 echo "========================================"
 echo " KaliOS AOK First Boot Configuration... "
 echo "========================================"
 
-echo "nameserver 1.1.1.1" > /etc/resolv.conf
-echo "nameserver 8.8.8.8" >> /etc/resolv.conf
-
 groupadd -g 3000 _apt 2>/dev/null || true
 useradd -u 3000 -g 3000 -s /usr/sbin/nologin -d /nonexistent _apt 2>/dev/null || true
 chmod 777 /tmp /var/tmp
-mkdir -p /etc/apt/apt.conf.d
-echo "Acquire::http::No-Cache true;" > /etc/apt/apt.conf.d/99no-cache
-echo "Acquire::http::Pipeline-Depth 0;" >> /etc/apt/apt.conf.d/99no-cache
 chmod +x /usr/lib/apt/methods/* 2>/dev/null || true
 
 apt-get update -y || apt-get update -y --allow-insecure-repositories
@@ -202,39 +233,30 @@ echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
 locale-gen en_US.UTF-8
 update-locale LANG=en_US.UTF-8
 
-# Ensure we have the base files needed for AOK
 export USER_NAME="root"
 export USER_SHELL="/bin/bash"
 
-# --- RUN AOK SCRIPTS ---
+# RUN AOK SCRIPTS just like select_distro -> install_debian -> setup_debian
 /bin/sh /opt/AOK/common_AOK/setup_common_env.sh
 /bin/sh /opt/AOK/Debian/setup_debian.sh
 
-# Cleanup the profile hook so it runs standard profile after this
-cat > /etc/profile << 'INNER_EOF'
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-if [ -d /etc/profile.d ]; then
-  for i in /etc/profile.d/*.sh; do
-    if [ -r $i ]; then
-      . $i
-    fi
-  done
-  unset i
-fi
-export PS1='\u@\h:\w\$ '
-INNER_EOF
+# Remove hook
+sed -i '/first_boot_setup.sh/d' /etc/profile
+rm -f /root/first_boot_setup.sh
 
 echo "========================================"
 echo " Configuration Complete! Welcome to Kali "
 echo "========================================"
+echo "Please completely close and restart the iSH app now."
 EOF
-    chmod 744 "$BUILD_DIR"/etc/profile
+    chmod +x "$BUILD_DIR"/root/first_boot_setup.sh
+    
+    cat >> "$BUILD_DIR"/etc/profile << 'EOF'
 
-    if [ "$LANG_SEL" = "2" ]; then
-        printf "${G}✓ Préparation des points de montage et intégration AOK${NC}\n"
-    else
-        printf "${G}✓ Preparing mount points and AOK integration${NC}\n"
-    fi
+if [ -f /root/first_boot_setup.sh ]; then
+    /bin/sh /root/first_boot_setup.sh
+fi
+EOF
 
     printf "\n${G}${MSG_BLD}${NC}\n"
     cd "$BUILD_DIR"
@@ -243,16 +265,10 @@ EOF
     
     cd /root
     mv "/tmp/$FINAL_TAR" "./$FINAL_TAR" 2>/dev/null || true
-    
-    if [ "$LANG_SEL" = "2" ]; then
-        printf "${G}✓ Image compressée créée avec succès: $FINAL_TAR${NC}\n"
-    else
-        printf "${G}✓ Tarball created successfully: $FINAL_TAR${NC}\n"
-    fi
 
     printf "\n${G}${MSG_FIN}${NC}\n"
     rm -rf "$BUILD_DIR"
-    rm -rf /tmp/aok_cache
+    rm -f "$ALPINE_TAR" "$ROOTFS_TAR"
     rm -rf /tmp/termios-repo
     
     printf "\n${G}${MSG_DONE}${NC}\n"
