@@ -39,7 +39,7 @@ if [ "$LANG_SEL" = "2" ]; then
     MSG_START="Démarrage de l'installation..."
     MSG_DEP="Installation des dépendances..."
     MSG_AOK="Installation du framework AOK..."
-    MSG_DOWN="TÉLÉCHARGEMENT DE L'IMAGE KALIOS (Google Drive)..."
+    MSG_DOWN="TÉLÉCHARGEMENT DE L'IMAGE KALIOS (Dropbox)..."
     MSG_EXTR="Extraction du Rootfs Kali..."
     MSG_SWAP="Remplacement d'Alpine par Kali (Processus AOK)..."
     MSG_DONE="Installation Terminée!"
@@ -51,7 +51,7 @@ else
     MSG_START="Starting Installation..."
     MSG_DEP="Installing Build Dependencies..."
     MSG_AOK="Installing AOK framework..."
-    MSG_DOWN="DOWNLOADING KALIOS IMAGE (Google Drive)..."
+    MSG_DOWN="DOWNLOADING KALIOS IMAGE (Dropbox)..."
     MSG_EXTR="Extracting Kali Rootfs..."
     MSG_SWAP="Swapping Alpine with Kali (AOK Process)..."
     MSG_DONE="Installation Complete!"
@@ -90,7 +90,7 @@ spinner() {
 KALI_DOWNLOAD_DIR="/tmp/kali_fs"
 KALI_TARBALL="$KALI_DOWNLOAD_DIR/kali-rootfs.tar.gz"
 KALI_TMP_DIR="/Kali"
-FILEID="1CxbJVbR4bhXKfP81bD_yQAzA_tdqmWXZ"
+DROPBOX_URL="https://www.dropbox.com/scl/fi/0y2av9eecib4ayhq6p9la/kali-nethunter-rootfs-minimal-i386.tar.gz?rlkey=87ozfa0zeyiti778cran8gjac&st=xquda7bi&dl=1"
 
 do_install() {
     echo ""
@@ -154,15 +154,31 @@ do_install() {
     printf "\n${G}${MSG_DOWN}${NC}\n"
     mkdir -p "$KALI_DOWNLOAD_DIR"
     
-    URL="https://docs.google.com/uc?export=download&id=${FILEID}"
-    curl -L -c /tmp/cookies.txt -s "$URL" > /tmp/out.html
-    CONFIRM=$(grep -Eo 'confirm=[a-zA-Z0-9_-]+' /tmp/out.html | cut -d= -f2 | head -n 1)
-    if [ -n "$CONFIRM" ]; then
-        curl -L -b /tmp/cookies.txt --progress-bar -o "$KALI_TARBALL" "https://docs.google.com/uc?export=download&confirm=${CONFIRM}&id=${FILEID}"
-    else
-        mv /tmp/out.html "$KALI_TARBALL"
+    # Download from Dropbox with direct download link (dl=1)
+    wget --progress=bar:force -O "$KALI_TARBALL" "$DROPBOX_URL" 2>&1 | \
+        grep -o '[0-9]\+%' | \
+        while read percent; do
+            printf "\r${G}Downloading: $percent${NC}"
+        done
+    echo ""
+    
+    if [ ! -f "$KALI_TARBALL" ]; then
+        printf "${R}ERROR: Failed to download Kali tarball!${NC}\n"
+        exit 1
     fi
-    rm -f /tmp/cookies.txt /tmp/out.html
+    
+    # Verify it's actually a tarball
+    if ! file "$KALI_TARBALL" | grep -q "gzip compressed"; then
+        printf "${R}ERROR: Downloaded file is not a valid gzip tarball!${NC}\n"
+        printf "${R}File type: $(file "$KALI_TARBALL")${NC}\n"
+        exit 1
+    fi
+    
+    if [ "$LANG_SEL" = "2" ]; then
+        printf "${G}✓ Téléchargement terminé${NC}\n"
+    else
+        printf "${G}✓ Download complete${NC}\n"
+    fi
 
     printf "\n${G}${MSG_EXTR}${NC}\n"
     
