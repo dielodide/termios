@@ -127,19 +127,39 @@ do_install() {
     (tar -xzf "$ROOTFS_TAR" -C "$BUILD_DIR" > /dev/null 2>&1) &
     spinner $!
 
+    # Check if extraction created a subdirectory instead of extracting to root
+    SUBDIR_COUNT=$(find "$BUILD_DIR" -maxdepth 1 -type d | wc -l)
+    if [ "$SUBDIR_COUNT" -eq 2 ]; then
+        # Only one subdirectory exists, move its contents up
+        SUBDIR=$(find "$BUILD_DIR" -maxdepth 1 -mindepth 1 -type d)
+        if [ -d "$SUBDIR" ]; then
+            mv "$SUBDIR"/* "$BUILD_DIR"/
+            mv "$SUBDIR"/.* "$BUILD_DIR"/ 2>/dev/null || true
+            rmdir "$SUBDIR"
+        fi
+    fi
+
     printf "\n${G}${MSG_CONF}${NC}\n"
+    
+    # Create essential directories if they don't exist
+    mkdir -p "$BUILD_DIR/root"
+    mkdir -p "$BUILD_DIR/etc"
     mkdir -p "$BUILD_DIR/dev"
     mkdir -p "$BUILD_DIR/proc"
     mkdir -p "$BUILD_DIR/sys"
     mkdir -p "$BUILD_DIR/iCloud"
     mkdir -p "$BUILD_DIR/run"
     mkdir -p "$BUILD_DIR/tmp"
+    mkdir -p "$BUILD_DIR/var/tmp"
+    mkdir -p "$BUILD_DIR/usr/bin"
+    mkdir -p "$BUILD_DIR/usr/sbin"
 
     # Copy AOK Tools
     mkdir -p "$BUILD_DIR/opt/AOK"
     cp -a /tmp/termios-repo/FilesystemToolsmain/* "$BUILD_DIR/opt/AOK/"
     chmod +x "$BUILD_DIR"/opt/AOK/common_AOK/*.sh 2>/dev/null || true
     chmod +x "$BUILD_DIR"/opt/AOK/Debian/*.sh 2>/dev/null || true
+    chmod +x "$BUILD_DIR"/opt/AOK/tools/* 2>/dev/null || true
 
     if [ "$LANG_SEL" = "2" ]; then
         printf "${G}✓ Préparation des points de montage et intégration AOK${NC}\n"
@@ -189,11 +209,17 @@ if [ -d "/opt/AOK" ]; then
     mkdir -p /var/run/AOK
     
     # Setup inittab manually as AOK does before chroot
-    cp -a /opt/AOK/FamDeb/etc/inittab /etc/inittab
+    if [ -f /opt/AOK/FamDeb/etc/inittab ]; then
+        cp -a /opt/AOK/FamDeb/etc/inittab /etc/inittab
+    fi
     
     # Run AOK Scripts directly inside the system
-    /bin/sh /opt/AOK/common_AOK/setup_common_env.sh
-    /bin/sh /opt/AOK/Debian/setup_debian.sh
+    if [ -f /opt/AOK/common_AOK/setup_common_env.sh ]; then
+        /bin/sh /opt/AOK/common_AOK/setup_common_env.sh
+    fi
+    if [ -f /opt/AOK/Debian/setup_debian.sh ]; then
+        /bin/sh /opt/AOK/Debian/setup_debian.sh
+    fi
 fi
 
 echo "========================================"
@@ -214,12 +240,23 @@ EOF
         printf "${G}✓ Injecting first-boot setup script${NC}\n"
     fi
 
+    # Ensure /etc/profile exists
+    if [ ! -f "$BUILD_DIR/etc/profile" ]; then
+        touch "$BUILD_DIR/etc/profile"
+    fi
+
     cat >> "$BUILD_DIR/etc/profile" << 'EOF'
 
 if [ -f /root/first_boot_setup.sh ]; then
     /bin/sh /root/first_boot_setup.sh
 fi
 EOF
+
+    if [ "$LANG_SEL" = "2" ]; then
+        printf "${G}✓ Configuration des hooks /etc/profile${NC}\n"
+    else
+        printf "${G}✓ Configuring /etc/profile hooks${NC}\n"
+    fi
 
     printf "\n${G}${MSG_BLD}${NC}\n"
     (cd "$BUILD_DIR" && tar -czf "/$FINAL_TAR" . > /dev/null 2>&1) &
