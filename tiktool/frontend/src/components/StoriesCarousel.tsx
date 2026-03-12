@@ -1,59 +1,63 @@
-import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import React, { useState } from 'react';
 import styles from './StoriesCarousel.module.css';
 
-interface Props { username: string; }
+const API = import.meta.env.VITE_API_URL || '/api';
 
-export default function StoriesCarousel({ username }: Props) {
-  const [stories, setStories] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [active, setActive] = useState<number | null>(null);
+interface Props {
+  items: any[];
+  username: string;
+}
 
-  useEffect(() => {
-    axios.get(`/api/profile/${username}/stories`)
-      .then(r => setStories(r.data.items || []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [username]);
+export default function StoriesCarousel({ items, username }: Props) {
+  const [active, setActive] = useState<any | null>(null);
 
-  if (loading) return <div className="spinner" />;
-  if (!stories.length) return <div style={{ color: '#555', textAlign: 'center', padding: '40px 0' }}>Aucune story active.</div>;
+  const handleDownload = (storyId: string) => {
+    const url = `${API}/download/story/${storyId}?username=${encodeURIComponent(username)}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tiktok-story-${storyId}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
 
   return (
-    <div>
-      <div className={styles.bubbles}>
-        {stories.map((s, i) => (
-          <button key={s.storyId} className={styles.bubble} onClick={() => setActive(i)}>
-            <div className={styles.bubbleRing}>
-              <img src={s.thumbnailUrl} alt="story" className={styles.bubbleImg} />
+    <>
+      <div className={styles.track}>
+        {items.map(story => (
+          <button
+            key={story.storyId}
+            className={`${styles.bubble} ${active?.storyId === story.storyId ? styles.activeBubble : ''}`}
+            onClick={() => setActive(active?.storyId === story.storyId ? null : story)}
+          >
+            <div className={styles.ring}>
+              {story.thumbnailUrl
+                ? <img src={story.thumbnailUrl} alt='story' className={styles.bubbleImg} />
+                : <span className={styles.bubbleIcon}>{story.mediaType === 'video' ? '🎬' : '🖼'}</span>
+              }
             </div>
-            <span className={styles.bubbleLabel}>Story {i + 1}</span>
+            <span className={styles.bubbleLabel}>{story.mediaType === 'video' ? 'Vidéo' : 'Photo'}</span>
           </button>
         ))}
       </div>
 
-      {active !== null && (
-        <div className={styles.overlay} onClick={() => setActive(null)}>
-          <div className={styles.storyViewer} onClick={e => e.stopPropagation()}>
-            <button className={styles.closeBtn} onClick={() => setActive(null)}>✕</button>
-            {stories[active].mediaType === 'video' ? (
-              <video
-                src={stories[active].mediaUrl}
-                autoPlay
-                controls
-                className={styles.media}
-              />
-            ) : (
-              <img src={stories[active].mediaUrl} className={styles.media} alt="story" />
-            )}
-            <div className={styles.nav}>
-              <button onClick={() => setActive(Math.max(0, active - 1))} disabled={active === 0}>← Préc</button>
-              <span>{active + 1} / {stories.length}</span>
-              <button onClick={() => setActive(Math.min(stories.length - 1, active + 1))} disabled={active === stories.length - 1}>Suiv →</button>
+      {active && (
+        <div className={styles.modal} onClick={e => e.target === e.currentTarget && setActive(null)}>
+          <div className={styles.viewer}>
+            <button className={styles.close} onClick={() => setActive(null)}>✕</button>
+            {active.mediaType === 'video'
+              ? <video src={active.mediaUrl} controls autoPlay className={styles.media} />
+              : <img src={active.mediaUrl} alt='story' className={styles.media} />
+            }
+            <div className={styles.viewerActions}>
+              <button className={styles.dlBtn} onClick={() => handleDownload(active.storyId)}>↓ Télécharger</button>
+              <span className={styles.expires}>
+                Expire le {new Date(active.expiresAt).toLocaleDateString('fr-CA')}
+              </span>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

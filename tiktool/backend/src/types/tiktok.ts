@@ -27,7 +27,7 @@ export interface TikTokVideo {
   thumbnailUrl: string;
   videoUrl: string;
   duration: number;
-  isRepost?: boolean;
+  isRepost: boolean;
   originalAuthor?: {
     username: string;
     profileUrl: string;

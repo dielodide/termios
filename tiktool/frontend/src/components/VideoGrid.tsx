@@ -1,71 +1,65 @@
-import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import React from 'react';
 import styles from './VideoGrid.module.css';
 
-interface Props {
-  username: string;
-  endpoint: 'videos' | 'reposts';
-  showOriginalAuthor?: boolean;
+const API = import.meta.env.VITE_API_URL || '/api';
+
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
+  return String(n);
 }
 
-export default function VideoGrid({ username, endpoint, showOriginalAuthor }: Props) {
-  const [items, setItems] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+function formatDuration(s: number): string {
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
 
-  useEffect(() => {
-    setLoading(true);
-    setItems([]);
-    axios.get(`/api/profile/${username}/${endpoint}`)
-      .then(r => setItems(r.data.items || []))
-      .catch(() => setError('Impossible de charger les vidéos.'))
-      .finally(() => setLoading(false));
-  }, [username, endpoint]);
+interface Props {
+  items: any[];
+  username: string;
+  isRepost?: boolean;
+}
 
-  if (loading) return <div className="spinner" />;
-  if (error) return <div className="error-box">{error}</div>;
-  if (!items.length) return <div className={styles.empty}>Aucun contenu disponible.</div>;
+export default function VideoGrid({ items, username, isRepost = false }: Props) {
+  const handleDownload = (videoId: string) => {
+    const url = `${API}/download/video/${videoId}?username=${encodeURIComponent(username)}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tiktok-${videoId}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
 
   return (
     <div className={styles.grid}>
       {items.map(item => (
-        <div key={item.videoId} className={`card ${styles.videoCard}`}>
+        <div key={item.videoId} className={styles.card}>
           <div className={styles.thumb}>
-            <img src={item.thumbnailUrl} alt={item.description} loading="lazy" />
-            {item.duration > 0 && (
-              <span className={styles.duration}>
-                {Math.floor(item.duration / 60)}:{String(item.duration % 60).padStart(2, '0')}
-              </span>
-            )}
-            {showOriginalAuthor && item.isRepost && (
-              <span className={styles.repostBadge}>🔁 Repost</span>
-            )}
+            {item.thumbnailUrl
+              ? <img src={item.thumbnailUrl} alt={item.description} loading='lazy' />
+              : <div className={styles.noThumb}>🎬</div>
+            }
+            {item.duration > 0 && <span className={styles.duration}>{formatDuration(item.duration)}</span>}
+            {isRepost && <span className={styles.repostBadge}>🔁 Repost</span>}
           </div>
           <div className={styles.info}>
-            <p className={styles.desc} title={item.description}>
-              {item.description || '(sans description)'}
-            </p>
+            {item.description && <p className={styles.desc}>{item.description}</p>}
             <div className={styles.stats}>
-              <span>▶ {fmt(item.stats.plays)}</span>
-              <span>❤️ {fmt(item.stats.likes)}</span>
+              <span>▶ {formatNumber(item.stats.plays)}</span>
+              <span>❤ {formatNumber(item.stats.likes)}</span>
+              <span>💬 {formatNumber(item.stats.comments)}</span>
             </div>
-            {showOriginalAuthor && item.originalAuthor?.username && (
-              <p className={styles.originalAuthor}>par @{item.originalAuthor.username}</p>
+            {isRepost && item.originalAuthor?.username && (
+              <p className={styles.original}>par @{item.originalAuthor.username}</p>
             )}
-            <a
-              href={`/api/download/video/${item.videoId}?username=${username}`}
-              download
-              className={styles.dlBtn}
-            >
-              ⬇ Télécharger
-            </a>
+            <button className={styles.dlBtn} onClick={() => handleDownload(item.videoId)}>
+              ↓ Télécharger
+            </button>
           </div>
         </div>
       ))}
     </div>
   );
-}
-
-function fmt(n: number) {
-  return n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n/1000).toFixed(1)}K` : String(n);
 }
