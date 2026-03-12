@@ -1,0 +1,77 @@
+.home {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: radial-gradient(ellipse at 60% 30%, #1a0010 0%, #0a0a0a 70%);
+}
+
+.hero {
+  text-align: center;
+  max-width: 560px;
+  width: 100%;
+}
+
+.logo {
+  font-size: 2.4rem;
+  margin-bottom: 12px;
+}
+
+.title {
+  font-size: clamp(2rem, 5vw, 3.2rem);
+  font-weight: 800;
+  line-height: 1.1;
+  margin-bottom: 12px;
+}
+
+.title span {
+  color: #fe2c55;
+}
+
+.subtitle {
+  color: #8a8a8a;
+  margin-bottom: 32px;
+  font-size: 1.05rem;
+}
+
+.searchForm {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.input {
+  flex: 1;
+  background: #1f1f1f;
+  border: 2px solid #333;
+  border-radius: 10px;
+  color: #f1f1f1;
+  font-size: 1.1rem;
+  padding: 14px 18px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.input:focus {
+  border-color: #fe2c55;
+}
+
+.btn {
+  background: #fe2c55;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  padding: 14px 22px;
+  border-radius: 10px;
+  white-space: nowrap;
+  transition: background 0.2s, transform 0.1s;
+}
+
+.btn:hover { background: #e0203e; }
+.btn:active { transform: scale(0.97); }
+
+.badge {
+  font-size: 0.82rem;
+  color: #555;
+}

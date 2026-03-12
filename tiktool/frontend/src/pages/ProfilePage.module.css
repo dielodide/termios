@@ -1,0 +1,68 @@
+.page { padding: 24px 0 60px; }
+.back { display: inline-block; color: #8a8a8a; margin-bottom: 24px; font-size: 0.95rem; }
+.back:hover { color: #f1f1f1; text-decoration: none; }
+
+.profileHeader {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  margin-bottom: 36px;
+  flex-wrap: wrap;
+}
+
+.avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 3px solid #fe2c55;
+  flex-shrink: 0;
+}
+
+.profileInfo { flex: 1; }
+.displayName { font-size: 1.6rem; font-weight: 800; margin-bottom: 2px; }
+.handle { color: #8a8a8a; margin-bottom: 8px; }
+.bio { color: #c0c0c0; font-size: 0.95rem; margin-bottom: 12px; max-width: 480px; }
+
+.stats { display: flex; gap: 24px; flex-wrap: wrap; }
+.stat { display: flex; flex-direction: column; }
+.statValue { font-size: 1.2rem; font-weight: 700; }
+.statLabel { font-size: 0.78rem; color: #8a8a8a; text-transform: uppercase; letter-spacing: 0.5px; }
+
+.privateBadge {
+  display: inline-block;
+  margin-top: 10px;
+  background: #2d1a00;
+  color: #ffaa00;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.82rem;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 28px;
+  border-bottom: 2px solid #1f1f1f;
+  padding-bottom: 0;
+}
+
+.tab {
+  background: transparent;
+  color: #8a8a8a;
+  font-size: 0.95rem;
+  font-weight: 600;
+  padding: 10px 20px;
+  border-radius: 8px 8px 0 0;
+  transition: color 0.2s, background 0.2s;
+}
+
+.tab:hover { color: #f1f1f1; }
+
+.activeTab {
+  color: #fe2c55 !important;
+  border-bottom: 2px solid #fe2c55;
+  margin-bottom: -2px;
+}
+
+.content { min-height: 200px; }
