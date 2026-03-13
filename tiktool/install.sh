@@ -16,7 +16,6 @@ warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 die()  { echo -e "${RED}[✘] ERREUR: $*${NC}"; exit 1; }
 
 # ── Config ────────────────────────────────────────────────────
-# Source = dossier où se trouve ce script (peu importe son nom)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_DIR="$SCRIPT_DIR"
 INSTALL_DIR="/opt/tiktool"
@@ -29,7 +28,7 @@ echo -e "${BOLD}${CYAN}╔══════════════════
 echo -e "${BOLD}${CYAN}║       TikTool — Install VPS          ║${NC}"
 echo -e "${BOLD}${CYAN}╚══════════════════════════════════════╝${NC}"
 echo ""
-info "Source  : $SOURCE_DIR"
+info "Source      : $SOURCE_DIR"
 info "Destination : $INSTALL_DIR"
 echo ""
 
@@ -60,14 +59,13 @@ fi
 # ── PM2 ───────────────────────────────────────────────────────
 info "Vérification de PM2..."
 if ! command -v pm2 &>/dev/null; then
-  info "Installation de PM2..."
   npm install -g pm2
   log "PM2 installé"
 else
   log "PM2 $(pm2 -v) déjà présent"
 fi
 
-# ── serve (pour le frontend statique) ────────────────────────
+# ── serve (frontend statique) ─────────────────────────────────
 if ! command -v serve &>/dev/null; then
   info "Installation de 'serve'..."
   npm install -g serve
@@ -81,16 +79,21 @@ mkdir -p "$INSTALL_DIR/frontend"
 
 # ── Copie des fichiers ────────────────────────────────────────
 info "Copie backend → $INSTALL_DIR/backend..."
-rsync -a --delete --exclude='.env' --exclude='node_modules' --exclude='dist' \
+rsync -a --delete \
+  --exclude='.env' \
+  --exclude='node_modules' \
+  --exclude='dist' \
   "$SOURCE_DIR/backend/" "$INSTALL_DIR/backend/"
 log "Backend copié"
 
 info "Copie frontend → $INSTALL_DIR/frontend..."
-rsync -a --delete --exclude='node_modules' --exclude='dist' \
+rsync -a --delete \
+  --exclude='node_modules' \
+  --exclude='dist' \
   "$SOURCE_DIR/frontend/" "$INSTALL_DIR/frontend/"
 log "Frontend copié"
 
-# ── .env backend ─────────────────────────────────────────────
+# ── .env backend ──────────────────────────────────────────────
 if [[ ! -f "$INSTALL_DIR/backend/.env" ]]; then
   info "Création du .env backend..."
   if [[ -f "$INSTALL_DIR/backend/.env.example" ]]; then
@@ -115,7 +118,7 @@ fi
 # ── Install + build backend ───────────────────────────────────
 info "npm install backend..."
 cd "$INSTALL_DIR/backend"
-npm ci 2>&1 | tail -5
+npm install --loglevel=error 2>&1 | tail -3
 log "Dépendances backend installées"
 
 info "Build TypeScript backend..."
@@ -125,14 +128,14 @@ log "Backend compilé → dist/"
 # ── Install + build frontend ──────────────────────────────────
 info "npm install frontend..."
 cd "$INSTALL_DIR/frontend"
-npm ci 2>&1 | tail -5
+npm install --loglevel=error 2>&1 | tail -3
 log "Dépendances frontend installées"
 
 info "Build Vite frontend..."
 npm run build
 log "Frontend compilé → dist/"
 
-# ── Stop PM2 instances existantes ────────────────────────────
+# ── Stop PM2 instances existantes ─────────────────────────────
 info "Nettoyage PM2 (anciennes instances)..."
 pm2 delete tiktool-backend  2>/dev/null || true
 pm2 delete tiktool-frontend 2>/dev/null || true
@@ -140,7 +143,6 @@ pm2 delete tiktool-frontend 2>/dev/null || true
 # ── Démarrage PM2 backend ─────────────────────────────────────
 info "Démarrage backend PM2 (port $BACKEND_PORT)..."
 cd "$INSTALL_DIR/backend"
-# Charger le .env manuellement puis démarrer
 set -o allexport; source .env; set +o allexport
 pm2 start dist/index.js \
   --name tiktool-backend \
@@ -159,12 +161,10 @@ pm2 start serve \
 log "Frontend démarré"
 
 # ── PM2 save + startup systemd ────────────────────────────────
-info "Configuration PM2 pour redémarrage automatique au boot..."
+info "Configuration PM2 boot automatique..."
 pm2 save
-pm2 startup systemd -u root --hp /root 2>&1 | grep -E '^sudo|^\[' | while read -r line; do
-  if [[ "$line" == sudo* ]]; then
-    eval "$line" 2>/dev/null || true
-  fi
+pm2 startup systemd -u root --hp /root 2>&1 | grep -E '^sudo' | while read -r line; do
+  eval "$line" 2>/dev/null || true
 done
 log "PM2 startup configuré (systemd)"
 
