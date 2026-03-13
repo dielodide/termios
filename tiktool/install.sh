@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================
 #  TikTool — Script d'installation VPS
-#  Installe backend + frontend dans /opt/tiktool
-#  et démarre tout avec PM2 (persiste au reboot)
+#  Build + démarrage PM2 directement depuis le dossier courant
 # =============================================================
 set -euo pipefail
 
@@ -16,9 +15,10 @@ warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 die()  { echo -e "${RED}[✘] ERREUR: $*${NC}"; exit 1; }
 
 # ── Config ────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_DIR="$SCRIPT_DIR"
-INSTALL_DIR="/opt/tiktool"
+# Tout se passe dans le dossier du script
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="$BASE_DIR/backend"
+FRONTEND_DIR="$BASE_DIR/frontend"
 BACKEND_PORT=3342
 FRONTEND_PORT=5173
 NODE_MIN_VERSION=18
@@ -28,16 +28,15 @@ echo -e "${BOLD}${CYAN}╔══════════════════
 echo -e "${BOLD}${CYAN}║       TikTool — Install VPS          ║${NC}"
 echo -e "${BOLD}${CYAN}╚══════════════════════════════════════╝${NC}"
 echo ""
-info "Source      : $SOURCE_DIR"
-info "Destination : $INSTALL_DIR"
+info "Répertoire  : $BASE_DIR"
+info "Backend     : $BACKEND_DIR"
+info "Frontend    : $FRONTEND_DIR"
 echo ""
 
 # ── Vérif root ────────────────────────────────────────────────
-[[ $EUID -ne 0 ]] && die "Lance ce script en root (sudo ./install.sh)"
-
-# ── Vérif source ──────────────────────────────────────────────
-[[ ! -d "$SOURCE_DIR/backend" ]] && die "Pas de dossier backend dans $SOURCE_DIR"
-[[ ! -d "$SOURCE_DIR/frontend" ]] && die "Pas de dossier frontend dans $SOURCE_DIR"
+[[ $EUID -ne 0 ]] && die "Lance ce script en root : sudo ./install.sh"
+[[ ! -d "$BACKEND_DIR" ]]  && die "Dossier backend introuvable : $BACKEND_DIR"
+[[ ! -d "$FRONTEND_DIR" ]] && die "Dossier frontend introuvable : $FRONTEND_DIR"
 
 # ── Node.js ───────────────────────────────────────────────────
 info "Vérification de Node.js..."
@@ -48,7 +47,7 @@ if ! command -v node &>/dev/null; then
 else
   NODE_VER=$(node -e "process.stdout.write(process.versions.node.split('.')[0])")
   if [[ $NODE_VER -lt $NODE_MIN_VERSION ]]; then
-    warn "Node.js $NODE_VER trop vieux, upgrade vers Node 20..."
+    warn "Node.js v$NODE_VER trop vieux, upgrade vers v20..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y nodejs
   else
@@ -72,35 +71,14 @@ if ! command -v serve &>/dev/null; then
   log "serve installé"
 fi
 
-# ── Dossier d'install ─────────────────────────────────────────
-info "Préparation de $INSTALL_DIR..."
-mkdir -p "$INSTALL_DIR/backend"
-mkdir -p "$INSTALL_DIR/frontend"
-
-# ── Copie des fichiers ────────────────────────────────────────
-info "Copie backend → $INSTALL_DIR/backend..."
-rsync -a --delete \
-  --exclude='.env' \
-  --exclude='node_modules' \
-  --exclude='dist' \
-  "$SOURCE_DIR/backend/" "$INSTALL_DIR/backend/"
-log "Backend copié"
-
-info "Copie frontend → $INSTALL_DIR/frontend..."
-rsync -a --delete \
-  --exclude='node_modules' \
-  --exclude='dist' \
-  "$SOURCE_DIR/frontend/" "$INSTALL_DIR/frontend/"
-log "Frontend copié"
-
 # ── .env backend ──────────────────────────────────────────────
-if [[ ! -f "$INSTALL_DIR/backend/.env" ]]; then
+if [[ ! -f "$BACKEND_DIR/.env" ]]; then
   info "Création du .env backend..."
-  if [[ -f "$INSTALL_DIR/backend/.env.example" ]]; then
-    cp "$INSTALL_DIR/backend/.env.example" "$INSTALL_DIR/backend/.env"
+  if [[ -f "$BACKEND_DIR/.env.example" ]]; then
+    cp "$BACKEND_DIR/.env.example" "$BACKEND_DIR/.env"
     log ".env créé depuis .env.example"
   else
-    cat > "$INSTALL_DIR/backend/.env" <<EOF
+    cat > "$BACKEND_DIR/.env" <<EOF
 PORT=$BACKEND_PORT
 CORS_ORIGIN=http://localhost:$FRONTEND_PORT
 LOG_LEVEL=info
@@ -117,7 +95,7 @@ fi
 
 # ── Install + build backend ───────────────────────────────────
 info "npm install backend..."
-cd "$INSTALL_DIR/backend"
+cd "$BACKEND_DIR"
 npm install --loglevel=error 2>&1 | tail -3
 log "Dépendances backend installées"
 
@@ -127,7 +105,7 @@ log "Backend compilé → dist/"
 
 # ── Install + build frontend ──────────────────────────────────
 info "npm install frontend..."
-cd "$INSTALL_DIR/frontend"
+cd "$FRONTEND_DIR"
 npm install --loglevel=error 2>&1 | tail -3
 log "Dépendances frontend installées"
 
@@ -142,7 +120,7 @@ pm2 delete tiktool-frontend 2>/dev/null || true
 
 # ── Démarrage PM2 backend ─────────────────────────────────────
 info "Démarrage backend PM2 (port $BACKEND_PORT)..."
-cd "$INSTALL_DIR/backend"
+cd "$BACKEND_DIR"
 set -o allexport; source .env; set +o allexport
 pm2 start dist/index.js \
   --name tiktool-backend \
@@ -152,7 +130,7 @@ log "Backend démarré"
 
 # ── Démarrage PM2 frontend ────────────────────────────────────
 info "Démarrage frontend PM2 (port $FRONTEND_PORT)..."
-cd "$INSTALL_DIR/frontend"
+cd "$FRONTEND_DIR"
 pm2 start serve \
   --name tiktool-frontend \
   --max-restarts 10 \
