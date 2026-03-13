@@ -16,8 +16,10 @@ warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 die()  { echo -e "${RED}[✘] ERREUR: $*${NC}"; exit 1; }
 
 # ── Config ────────────────────────────────────────────────────
-SOURCE_DIR="/opt/tooltiktokdd"         # Source (ce repo cloné)
-INSTALL_DIR="/opt/tiktool"             # Destination
+# Source = dossier où se trouve ce script (peu importe son nom)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_DIR="$SCRIPT_DIR"
+INSTALL_DIR="/opt/tiktool"
 BACKEND_PORT=3342
 FRONTEND_PORT=5173
 NODE_MIN_VERSION=18
@@ -27,12 +29,14 @@ echo -e "${BOLD}${CYAN}╔══════════════════
 echo -e "${BOLD}${CYAN}║       TikTool — Install VPS          ║${NC}"
 echo -e "${BOLD}${CYAN}╚══════════════════════════════════════╝${NC}"
 echo ""
+info "Source  : $SOURCE_DIR"
+info "Destination : $INSTALL_DIR"
+echo ""
 
 # ── Vérif root ────────────────────────────────────────────────
 [[ $EUID -ne 0 ]] && die "Lance ce script en root (sudo ./install.sh)"
 
 # ── Vérif source ──────────────────────────────────────────────
-[[ ! -d "$SOURCE_DIR" ]] && die "Dossier source introuvable: $SOURCE_DIR"
 [[ ! -d "$SOURCE_DIR/backend" ]] && die "Pas de dossier backend dans $SOURCE_DIR"
 [[ ! -d "$SOURCE_DIR/frontend" ]] && die "Pas de dossier frontend dans $SOURCE_DIR"
 
@@ -63,6 +67,13 @@ else
   log "PM2 $(pm2 -v) déjà présent"
 fi
 
+# ── serve (pour le frontend statique) ────────────────────────
+if ! command -v serve &>/dev/null; then
+  info "Installation de 'serve'..."
+  npm install -g serve
+  log "serve installé"
+fi
+
 # ── Dossier d'install ─────────────────────────────────────────
 info "Préparation de $INSTALL_DIR..."
 mkdir -p "$INSTALL_DIR/backend"
@@ -70,16 +81,18 @@ mkdir -p "$INSTALL_DIR/frontend"
 
 # ── Copie des fichiers ────────────────────────────────────────
 info "Copie backend → $INSTALL_DIR/backend..."
-rsync -a --delete "$SOURCE_DIR/backend/" "$INSTALL_DIR/backend/"
+rsync -a --delete --exclude='.env' --exclude='node_modules' --exclude='dist' \
+  "$SOURCE_DIR/backend/" "$INSTALL_DIR/backend/"
 log "Backend copié"
 
 info "Copie frontend → $INSTALL_DIR/frontend..."
-rsync -a --delete "$SOURCE_DIR/frontend/" "$INSTALL_DIR/frontend/"
+rsync -a --delete --exclude='node_modules' --exclude='dist' \
+  "$SOURCE_DIR/frontend/" "$INSTALL_DIR/frontend/"
 log "Frontend copié"
 
 # ── .env backend ─────────────────────────────────────────────
 if [[ ! -f "$INSTALL_DIR/backend/.env" ]]; then
-  info "Création du .env backend (depuis .env.example)..."
+  info "Création du .env backend..."
   if [[ -f "$INSTALL_DIR/backend/.env.example" ]]; then
     cp "$INSTALL_DIR/backend/.env.example" "$INSTALL_DIR/backend/.env"
     log ".env créé depuis .env.example"
@@ -99,29 +112,27 @@ else
   warn ".env existant conservé (pas écrasé)"
 fi
 
-# ── Install deps backend ──────────────────────────────────────
+# ── Install + build backend ───────────────────────────────────
 info "npm install backend..."
 cd "$INSTALL_DIR/backend"
-npm ci --prefer-offline 2>&1 | tail -5
+npm ci 2>&1 | tail -5
 log "Dépendances backend installées"
 
-# ── Build backend (TypeScript) ────────────────────────────────
 info "Build TypeScript backend..."
 npm run build
 log "Backend compilé → dist/"
 
-# ── Install deps frontend ─────────────────────────────────────
+# ── Install + build frontend ──────────────────────────────────
 info "npm install frontend..."
 cd "$INSTALL_DIR/frontend"
-npm ci --prefer-offline 2>&1 | tail -5
+npm ci 2>&1 | tail -5
 log "Dépendances frontend installées"
 
-# ── Build frontend (Vite) ─────────────────────────────────────
 info "Build Vite frontend..."
 npm run build
 log "Frontend compilé → dist/"
 
-# ── Stop PM2 si déjà lancé ────────────────────────────────────
+# ── Stop PM2 instances existantes ────────────────────────────
 info "Nettoyage PM2 (anciennes instances)..."
 pm2 delete tiktool-backend  2>/dev/null || true
 pm2 delete tiktool-frontend 2>/dev/null || true
@@ -129,43 +140,33 @@ pm2 delete tiktool-frontend 2>/dev/null || true
 # ── Démarrage PM2 backend ─────────────────────────────────────
 info "Démarrage backend PM2 (port $BACKEND_PORT)..."
 cd "$INSTALL_DIR/backend"
-pm2 start dist/index.js \
-  --name tiktool-backend \
-  --env production \
-  --max-restarts 10 \
-  --restart-delay 3000 \
-  -- --env-file .env 2>/dev/null || \
+# Charger le .env manuellement puis démarrer
+set -o allexport; source .env; set +o allexport
 pm2 start dist/index.js \
   --name tiktool-backend \
   --max-restarts 10 \
   --restart-delay 3000
 log "Backend démarré"
 
-# ── Démarrage PM2 frontend (serve statique) ───────────────────
+# ── Démarrage PM2 frontend ────────────────────────────────────
 info "Démarrage frontend PM2 (port $FRONTEND_PORT)..."
-# Utilise 'serve' pour servir le build Vite statique
-if ! command -v serve &>/dev/null; then
-  npm install -g serve
-fi
 cd "$INSTALL_DIR/frontend"
-pm2 start "serve" \
+pm2 start serve \
   --name tiktool-frontend \
   --max-restarts 10 \
   --restart-delay 3000 \
   -- -s dist -l $FRONTEND_PORT
 log "Frontend démarré"
 
-# ── PM2 save + startup ────────────────────────────────────────
+# ── PM2 save + startup systemd ────────────────────────────────
 info "Configuration PM2 pour redémarrage automatique au boot..."
 pm2 save
-STARTUP_CMD=$(pm2 startup systemd -u root --hp /root 2>&1 | grep 'sudo' | tail -1 || true)
-if [[ -n "$STARTUP_CMD" ]]; then
-  eval "$STARTUP_CMD" 2>/dev/null || true
-  log "PM2 startup configuré"
-else
-  pm2 startup systemd -u root --hp /root 2>/dev/null || true
-  log "PM2 startup appliqué"
-fi
+pm2 startup systemd -u root --hp /root 2>&1 | grep -E '^sudo|^\[' | while read -r line; do
+  if [[ "$line" == sudo* ]]; then
+    eval "$line" 2>/dev/null || true
+  fi
+done
+log "PM2 startup configuré (systemd)"
 
 # ── Firewall (ufw) ────────────────────────────────────────────
 if command -v ufw &>/dev/null; then
@@ -175,18 +176,19 @@ if command -v ufw &>/dev/null; then
   log "Ports $BACKEND_PORT et $FRONTEND_PORT ouverts"
 fi
 
-# ── Résumé ────────────────────────────────────────────────────
+# ── Résumé final ──────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════╗${NC}"
 echo -e "${BOLD}${GREEN}║         Installation terminée ✔          ║${NC}"
 echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "  ${BOLD}Backend  ${NC}→ http://$(hostname -I | awk '{print $1}'):${BACKEND_PORT}"
-echo -e "  ${BOLD}Frontend ${NC}→ http://$(hostname -I | awk '{print $1}'):${FRONTEND_PORT}"
-echo -e "  ${BOLD}Health   ${NC}→ http://$(hostname -I | awk '{print $1}'):${BACKEND_PORT}/health"
+VPS_IP=$(hostname -I | awk '{print $1}')
+echo -e "  ${BOLD}Backend  ${NC}→ http://${VPS_IP}:${BACKEND_PORT}"
+echo -e "  ${BOLD}Frontend ${NC}→ http://${VPS_IP}:${FRONTEND_PORT}"
+echo -e "  ${BOLD}Health   ${NC}→ http://${VPS_IP}:${BACKEND_PORT}/health"
 echo ""
-echo -e "  ${CYAN}pm2 status${NC}           — voir les process"
-echo -e "  ${CYAN}pm2 logs tiktool-backend${NC}  — logs backend"
-echo -e "  ${CYAN}pm2 logs tiktool-frontend${NC} — logs frontend"
-echo -e "  ${CYAN}pm2 restart all${NC}       — redémarrer tout"
+echo -e "  ${CYAN}pm2 status${NC}                 — voir les process"
+echo -e "  ${CYAN}pm2 logs tiktool-backend${NC}   — logs backend"
+echo -e "  ${CYAN}pm2 logs tiktool-frontend${NC}  — logs frontend"
+echo -e "  ${CYAN}pm2 restart all${NC}            — redémarrer tout"
 echo ""
