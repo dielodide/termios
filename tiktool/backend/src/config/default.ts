@@ -1,5 +1,5 @@
 export const config = {
-  port: parseInt(process.env.PORT || '3001'),
+  port: parseInt(process.env.PORT || '3342'),
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
   tiktokUserAgent: process.env.TIKTOK_USER_AGENT ||
     'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
